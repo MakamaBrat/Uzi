@@ -1,33 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Chison USG — программа подключения к УЗИ-датчику
+Chison USG — просмотр картинки с УЗИ-датчика.
 
-Режимы:
-  wifi  — беспроводной датчик (UDP 192.168.0.188:9000), heartbeat + приём кадров
-  usb   — USB/UVC (как веб-камера), OpenCV VideoCapture
-  auto  — сначала Wi‑Fi, при неудаче USB
+Источники:
+  usb  — датчик как UVC-камера (OpenCV VideoCapture)
+  wifi — UDP 192.168.0.188:9000 (wake + heartbeat, приём датаграмм)
+  auto — сначала USB, если не найден — Wi-Fi
 
-Лицензия: always-valid (любое устройство принимается).
-
-Управление в окне:
-  s         — снимок
-  r         — запись вкл/выкл
-  h         — принудительный heartbeat (Wi‑Fi)
-  q / Esc   — выход
+Клавиши: s — снимок, r — запись, h — heartbeat (Wi-Fi), q/Esc — выход.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import socket
-import struct
 import sys
 import threading
 import time
 from collections import deque
 from datetime import datetime
-from typing import Deque, Optional, Tuple
+from typing import Deque, Optional
 
 import numpy as np
 
@@ -38,122 +31,186 @@ except ImportError:
     sys.exit(1)
 
 from protocol import (
-    SENSOR_IP,
-    SENSOR_PORT,
-    LOCAL_PORT,
-    MAX_DATAGRAM,
-    WAKE_BYTE,
-    build_heartbeat,
-    build_freetest_block,
-    try_parse_image_header,
+    LOCAL_PORT, MAX_DATAGRAM, SENSOR_IP, SENSOR_PORT, WAKE_BYTE, build_heartbeat,
 )
-from license_bypass import decode_key, set_probe_valid
 
 
-# ---------------------------------------------------------------------------
-# Wi-Fi transport
-# ---------------------------------------------------------------------------
-class WifiProbe:
-    def __init__(
-        self,
-        sensor_ip: str = SENSOR_IP,
-        sensor_port: int = SENSOR_PORT,
-        local_port: int = LOCAL_PORT,
-        heartbeat_interval: float = 2.0,
-    ):
-        self.sensor_ip = sensor_ip
-        self.sensor_port = sensor_port
-        self.local_port = local_port
-        self.heartbeat_interval = heartbeat_interval
+# --------------------------------------------------------------------------
+# Источники кадров
+# --------------------------------------------------------------------------
+class Source:
+    name = "none"
+
+    def open(self) -> bool:
+        raise NotImplementedError
+
+    def read(self) -> Optional[np.ndarray]:
+        """Вернуть новый серый кадр или None, если нового кадра нет."""
+        raise NotImplementedError
+
+    def status(self) -> str:
+        return ""
+
+    def poke(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class UsbSource(Source):
+    name = "usb"
+
+    def __init__(self, index: int, width: int = 0, height: int = 0):
+        self.index, self.width, self.height = index, width, height
+        self.cap: Optional[cv2.VideoCapture] = None
+        self._fails = 0
+
+    def open(self) -> bool:
+        cap = cv2.VideoCapture(self.index)
+        if not cap.isOpened():
+            return False
+        if self.width:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        if self.height:
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        ok, _ = cap.read()
+        if not ok:
+            cap.release()
+            return False
+        self.cap, self._fails = cap, 0
+        return True
+
+    def read(self) -> Optional[np.ndarray]:
+        if self.cap is None:
+            return None
+        ok, frame = self.cap.read()
+        if not ok:
+            self._fails += 1
+            if self._fails > 30:  # потеряли устройство — пробуем переоткрыть
+                self.close()
+                self.open()
+            return None
+        self._fails = 0
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+
+    def status(self) -> str:
+        return f"usb[{self.index}]" + ("" if self.cap else " (нет сигнала)")
+
+    def close(self) -> None:
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+
+
+class FrameAssembler:
+    """Best-effort сборка кадра из датаграмм: формат заголовка строк не разобран."""
+
+    def __init__(self, width: int = 512, height: int = 512):
+        self.width, self.height = width, height
+        self.canvas = np.zeros(width * height, dtype=np.uint8)
+        self.pos = 0
+
+    def feed(self, data: bytes) -> bool:
+        if len(data) < 64:
+            return False
+        payload = np.frombuffer(data[16:], dtype=np.uint8)
+        n, size = payload.size, self.canvas.size
+        end = self.pos + n
+        if end <= size:
+            self.canvas[self.pos:end] = payload
+        else:
+            first = size - self.pos
+            self.canvas[self.pos:] = payload[:first]
+            self.canvas[:n - first] = payload[first:]
+        self.pos = end % size
+        return True
+
+    def image(self) -> np.ndarray:
+        return self.canvas.reshape(self.height, self.width).copy()
+
+
+class WifiSource(Source):
+    name = "wifi"
+
+    def __init__(self, ip: str, hb_interval: float, width: int, height: int):
+        self.ip, self.hb_interval = ip, hb_interval
+        self.assembler = FrameAssembler(width, height)
         self.sock: Optional[socket.socket] = None
-        self._rx_thread: Optional[threading.Thread] = None
-        self._hb_thread: Optional[threading.Thread] = None
+        self.packets: Deque[bytes] = deque(maxlen=512)
+        self.stats = {"rx": 0, "bytes": 0, "err": 0}
+        self.last_rx = 0.0
         self._stop = threading.Event()
-        self.packets: Deque[bytes] = deque(maxlen=256)
-        self.stats = {"rx": 0, "bytes": 0, "last_len": 0, "errors": 0}
-        self.connected = False
-        self.last_packet_time = 0.0
+        self._threads: list[threading.Thread] = []
 
     def open(self) -> bool:
         try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 * 1024 * 1024)
-            except OSError:
-                pass
-            self.sock.bind(("0.0.0.0", self.local_port))
-            self.sock.settimeout(0.3)
-            self._stop.clear()
-            self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
-            self._hb_thread = threading.Thread(target=self._hb_loop, daemon=True)
-            self._rx_thread.start()
-            self._hb_thread.start()
-            self._send_wake_and_heartbeat()
-            self.connected = True
-            return True
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", LOCAL_PORT))
+            s.settimeout(0.3)
         except OSError as e:
-            print(f"[WiFi] Не удалось открыть сокет: {e}")
-            self.close()
+            print(f"[WiFi] не удалось открыть сокет: {e}")
             return False
+        self.sock = s
+        self._stop.clear()
+        self.poke()
+        for target in (self._rx_loop, self._hb_loop):
+            t = threading.Thread(target=target, daemon=True)
+            t.start()
+            self._threads.append(t)
+        return True
 
-    def _send_wake_and_heartbeat(self) -> None:
+    def poke(self) -> None:
         if not self.sock:
             return
         try:
-            self.sock.sendto(WAKE_BYTE, (self.sensor_ip, self.sensor_port))
-            # always-valid freeTest block + classic heartbeat
-            ft = build_freetest_block(
-                name="P2-OPEN",
-                time_stamp=int(time.time()),
-                regedit=int(time.time()),
-                tenancy=-1,
-            )
-            self.sock.sendto(ft, (self.sensor_ip, self.sensor_port))
-            hb = build_heartbeat()
-            self.sock.sendto(hb, (self.sensor_ip, self.sensor_port))
-        except OSError as e:
-            self.stats["errors"] += 1
-            print(f"[WiFi] send error: {e}")
-
-    def force_heartbeat(self) -> None:
-        self._send_wake_and_heartbeat()
+            self.sock.sendto(WAKE_BYTE, (self.ip, SENSOR_PORT))
+            self.sock.sendto(build_heartbeat(), (self.ip, SENSOR_PORT))
+        except OSError:
+            self.stats["err"] += 1
 
     def _hb_loop(self) -> None:
-        while not self._stop.is_set():
-            self._send_wake_and_heartbeat()
-            self._stop.wait(self.heartbeat_interval)
+        while not self._stop.wait(self.hb_interval):
+            self.poke()
 
     def _rx_loop(self) -> None:
-        while not self._stop.is_set() and self.sock:
+        while not self._stop.is_set():
             try:
-                data, addr = self.sock.recvfrom(MAX_DATAGRAM + 64)
-                if not data:
-                    continue
-                self.packets.append(data)
-                self.stats["rx"] += 1
-                self.stats["bytes"] += len(data)
-                self.stats["last_len"] = len(data)
-                self.last_packet_time = time.time()
+                data, _ = self.sock.recvfrom(MAX_DATAGRAM + 64)
             except socket.timeout:
                 continue
             except OSError:
-                if not self._stop.is_set():
-                    self.stats["errors"] += 1
                 break
+            self.packets.append(data)
+            self.stats["rx"] += 1
+            self.stats["bytes"] += len(data)
+            self.last_rx = time.time()
 
-    def pop_packet(self) -> Optional[bytes]:
-        try:
-            return self.packets.popleft()
-        except IndexError:
-            return None
+    def read(self) -> Optional[np.ndarray]:
+        got = False
+        for _ in range(64):
+            try:
+                pkt = self.packets.popleft()
+            except IndexError:
+                break
+            got |= self.assembler.feed(pkt)
+        return self.assembler.image() if got else None
 
-    def is_alive(self, timeout: float = 5.0) -> bool:
-        if not self.connected:
-            return False
-        if self.last_packet_time == 0:
-            return True  # waiting for first packet
-        return (time.time() - self.last_packet_time) < timeout
+    def status(self) -> str:
+        if not self.last_rx:
+            state = "ожидание пакетов"
+        elif time.time() - self.last_rx > 5:
+            state = "таймаут"
+        else:
+            state = "поток идёт"
+        return f"wifi {state} rx={self.stats['rx']} err={self.stats['err']}"
 
     def close(self) -> None:
         self._stop.set()
@@ -162,299 +219,157 @@ class WifiProbe:
                 self.sock.close()
             except OSError:
                 pass
-        self.sock = None
-        self.connected = False
+            self.sock = None
+        for t in self._threads:
+            t.join(timeout=1.0)
+        self._threads.clear()
 
 
-# ---------------------------------------------------------------------------
-# Frame reconstruction (best-effort from datagram stream)
-# ---------------------------------------------------------------------------
-class FrameAssembler:
-    """
-    Collects UDP payloads into a displayable grayscale image.
-    Without full line-header map from firmware, we treat sequential
-    datagrams as scanline chunks and reshape into a scrolling B-mode view.
-    """
-
-    def __init__(self, width: int = 512, height: int = 512):
-        self.width = width
-        self.height = height
-        self.canvas = np.zeros((height, width), dtype=np.uint8)
-        self.row = 0
-        self.frames_ready = 0
-
-    def feed(self, data: bytes) -> Optional[np.ndarray]:
-        if len(data) < 8:
-            return None
-        # Skip possible small control packets
-        if len(data) < 64:
-            return None
-        # Use payload after a soft header guess (first 16–32 bytes often meta)
-        offset = 16 if len(data) > 32 else 0
-        payload = np.frombuffer(data[offset:], dtype=np.uint8)
-        if payload.size == 0:
-            return None
-
-        # Write as consecutive pixels, wrap rows
-        flat = self.canvas.ravel()
-        n = flat.size
-        idx = self.row * self.width
-        for i in range(0, payload.size, self.width):
-            chunk = payload[i : i + self.width]
-            end = idx + chunk.size
-            if end <= n:
-                flat[idx:end] = chunk
-            else:
-                # wrap
-                first = n - idx
-                flat[idx:] = chunk[:first]
-                flat[: chunk.size - first] = chunk[first:]
-            idx = (idx + self.width) % n
-            self.row = (self.row + 1) % self.height
-        self.frames_ready += 1
-        return self.canvas.copy()
-
-
-# ---------------------------------------------------------------------------
-# USB / UVC path
-# ---------------------------------------------------------------------------
-def open_usb(index: int, width: int = 0, height: int = 0) -> Optional[cv2.VideoCapture]:
-    cap = cv2.VideoCapture(index)
-    if not cap.isOpened():
-        return None
-    if width:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    if height:
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    ok, _ = cap.read()
-    if not ok:
-        cap.release()
-        return None
-    return cap
-
-
-def list_usb(max_index: int = 8):
+def list_usb(max_index: int = 8) -> None:
     print("USB/UVC устройства:")
-    found = []
+    found = False
     for i in range(max_index):
         cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            ok, _ = cap.read()
-            if ok:
-                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                print(f"  [{i}] {w}x{h}")
-                found.append(i)
+        if cap.isOpened() and cap.read()[0]:
+            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            print(f"  [{i}] {w}x{h}")
+            found = True
         cap.release()
     if not found:
         print("  не найдены")
-    return found
 
 
-# ---------------------------------------------------------------------------
-# Main UI loop
-# ---------------------------------------------------------------------------
-def run(
-    mode: str,
-    sensor_ip: str,
-    device: int,
-    width: int,
-    height: int,
-    output: str,
-    hb_interval: float,
-):
-    os.makedirs(output, exist_ok=True)
+def pick_source(args) -> Optional[Source]:
+    candidates = []
+    if args.mode in ("usb", "auto"):
+        candidates.append(UsbSource(args.device, args.width, args.height))
+    if args.mode in ("wifi", "auto"):
+        candidates.append(WifiSource(args.ip, args.hb, args.width, args.height))
+    for src in candidates:
+        print(f"[{src.name}] открываю...")
+        if src.open():
+            print(f"[{src.name}] OK")
+            return src
+        print(f"[{src.name}] недоступно")
+    return None
 
-    # License: always OK for any device
-    lic = decode_key("OPEN", "P2-OPEN", rent=False)
-    probe = set_probe_valid("P2-OPEN", "P2-OPEN")
-    print(f"[License] {lic.result} tenancy={lic.m_tenancy} (bypass={lic.bypass})")
-    print(f"[Probe]   {probe['result']} tenancy={probe['pi']['tenancy']}")
 
-    wifi: Optional[WifiProbe] = None
-    usb: Optional[cv2.VideoCapture] = None
-    assembler = FrameAssembler(width=width or 512, height=height or 512)
+# --------------------------------------------------------------------------
+# Запись и UI
+# --------------------------------------------------------------------------
+class Recorder:
+    def __init__(self, out_dir: str):
+        self.out_dir = out_dir
+        self.writer: Optional[cv2.VideoWriter] = None
+        self.path = ""
 
-    if mode in ("wifi", "auto"):
-        print(f"[WiFi] Подключение к {sensor_ip}:{SENSOR_PORT}, локальный порт {LOCAL_PORT}...")
-        wifi = WifiProbe(sensor_ip=sensor_ip, heartbeat_interval=hb_interval)
-        if wifi.open():
-            print("[WiFi] Сокет открыт, heartbeat отправляется. Ожидание пакетов от датчика...")
-            print("       Убедитесь, что ПК в сети 192.168.0.x (точка доступа датчика).")
+    @property
+    def active(self) -> bool:
+        return self.writer is not None
+
+    def start(self, frame: np.ndarray, fps: float) -> None:
+        h, w = frame.shape[:2]
+        self.path = os.path.join(
+            self.out_dir, f"usg_{datetime.now():%Y%m%d_%H%M%S}.avi")
+        self.writer = cv2.VideoWriter(
+            self.path, cv2.VideoWriter_fourcc(*"MJPG"), max(fps, 5.0), (w, h))
+        if not self.writer.isOpened():
+            self.writer = None
+            print("Не удалось начать запись")
         else:
-            wifi = None
-            if mode == "wifi":
-                print("[WiFi] Не удалось. Выход.")
-                return
+            print(f"Запись: {self.path}")
 
-    if wifi is None and mode in ("usb", "auto"):
-        print(f"[USB] Открытие устройства {device}...")
-        usb = open_usb(device, width, height)
-        if usb is None:
-            print("[USB] Устройство недоступно.")
-            if mode == "usb":
-                return
-        else:
-            print("[USB] OK")
+    def write(self, frame: np.ndarray) -> None:
+        if self.writer is not None:
+            self.writer.write(frame)
 
-    if wifi is None and usb is None:
-        print("Нет активного источника. Проверьте Wi‑Fi AP датчика или USB.")
-        return
+    def stop(self) -> None:
+        if self.writer is not None:
+            self.writer.release()
+            self.writer = None
+            print(f"Запись сохранена: {self.path}")
+
+
+def run(args) -> int:
+    os.makedirs(args.output, exist_ok=True)
+    src = pick_source(args)
+    if src is None:
+        print("Нет активного источника. Проверьте USB или Wi-Fi точку датчика.")
+        return 1
 
     window = "Chison USG"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window, 800, 600)
 
-    recording = False
-    writer = None
-    fps = 0.0
-    t_prev = time.time()
-    frame_count = 0
-    last_frame = np.zeros((assembler.height, assembler.width), dtype=np.uint8)
-    status = "waiting"
-
+    rec = Recorder(args.output)
+    last = np.zeros((args.height, args.width), dtype=np.uint8)
+    fps, n, t0 = 0.0, 0, time.time()
     print("Клавиши: s=снимок  r=запись  h=heartbeat  q=выход")
 
     try:
-        while True:
-            frame = None
-
-            if wifi and wifi.connected:
-                # drain a few packets per tick
-                for _ in range(8):
-                    pkt = wifi.pop_packet()
-                    if pkt is None:
-                        break
-                    img = assembler.feed(pkt)
-                    if img is not None:
-                        frame = img
-                        status = "wifi"
-                if frame is None and wifi.is_alive():
-                    frame = last_frame
-                    status = "wifi-idle"
-                elif not wifi.is_alive() and wifi.last_packet_time > 0:
-                    status = "wifi-timeout"
-
-            if frame is None and usb is not None:
-                ok, bgr = usb.read()
-                if ok:
-                    if len(bgr.shape) == 3:
-                        frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-                    else:
-                        frame = bgr
-                    status = "usb"
-
-            if frame is None:
-                frame = last_frame
-            else:
-                last_frame = frame
-
-            # FPS
-            frame_count += 1
-            now = time.time()
-            if now - t_prev >= 1.0:
-                fps = frame_count / (now - t_prev)
-                frame_count = 0
-                t_prev = now
-
-            # Overlay
-            if len(frame.shape) == 2:
-                display = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            else:
-                display = frame.copy()
-
-            lines = [
-                f"FPS: {fps:4.1f}  mode: {status}",
-                f"License: OK (always-valid)  tenancy: -1",
-            ]
-            if wifi:
-                lines.append(
-                    f"WiFi rx={wifi.stats['rx']} bytes={wifi.stats['bytes']} "
-                    f"last={wifi.stats['last_len']}B err={wifi.stats['errors']}"
-                )
-            if recording:
-                lines.append("REC")
-
-            y = 22
-            for i, text in enumerate(lines):
-                color = (0, 0, 255) if text == "REC" else (0, 255, 0)
-                cv2.putText(display, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
-                y += 22
-
-            cv2.imshow(window, display)
-
-            if recording and writer is not None:
-                writer.write(display)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
-                break
-            if key == ord("s"):
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-                path = os.path.join(output, f"usg_{ts}.png")
-                cv2.imwrite(path, frame)
-                print(f"Снимок: {path}")
-            if key == ord("r"):
-                if not recording:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    path = os.path.join(output, f"usg_{ts}.avi")
-                    h, w = display.shape[:2]
-                    fourcc = cv2.VideoWriter_fourcc(*"XVID")
-                    writer = cv2.VideoWriter(path, fourcc, 15.0, (w, h))
-                    recording = True
-                    print(f"Запись: {path}")
+        with src:
+            while True:
+                frame = src.read()
+                if frame is not None:
+                    last = frame
+                    n += 1
                 else:
-                    recording = False
-                    if writer:
-                        writer.release()
-                        writer = None
-                    print("Запись остановлена")
-            if key == ord("h") and wifi:
-                wifi.force_heartbeat()
-                print("[WiFi] heartbeat отправлен")
+                    time.sleep(0.005)
 
-            if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
-                break
+                now = time.time()
+                if now - t0 >= 1.0:
+                    fps, n, t0 = n / (now - t0), 0, now
+
+                view = cv2.cvtColor(last, cv2.COLOR_GRAY2BGR)
+                cv2.putText(view, f"FPS {fps:4.1f}  {src.status()}", (10, 22),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1, cv2.LINE_AA)
+                if rec.active:
+                    cv2.putText(view, "REC", (10, 44), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.55, (0, 0, 255), 1, cv2.LINE_AA)
+                    if frame is not None:
+                        rec.write(view)
+                cv2.imshow(window, view)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
+                    break
+                if key == ord("s"):
+                    path = os.path.join(
+                        args.output, f"usg_{datetime.now():%Y%m%d_%H%M%S_%f}.png")
+                    cv2.imwrite(path, last)
+                    print(f"Снимок: {path}")
+                elif key == ord("r"):
+                    rec.stop() if rec.active else rec.start(view, fps or 15.0)
+                elif key == ord("h"):
+                    src.poke()
+                if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
+                    break
+    except KeyboardInterrupt:
+        pass
     finally:
-        if writer:
-            writer.release()
-        if wifi:
-            wifi.close()
-        if usb:
-            usb.release()
+        rec.stop()
         cv2.destroyAllWindows()
         print("Завершено.")
+    return 0
 
 
-def main():
-    p = argparse.ArgumentParser(description="Chison USG — подключение к УЗИ-датчику")
-    p.add_argument(
-        "-m", "--mode", choices=("auto", "wifi", "usb"), default="auto",
-        help="источник: auto / wifi / usb (по умолчанию auto)",
-    )
-    p.add_argument("--ip", default=SENSOR_IP, help=f"IP датчика (по умолчанию {SENSOR_IP})")
+def main() -> int:
+    p = argparse.ArgumentParser(description="Chison USG — просмотр с УЗИ-датчика")
+    p.add_argument("-m", "--mode", choices=("auto", "usb", "wifi"), default="auto")
+    p.add_argument("--ip", default=SENSOR_IP, help="IP датчика (Wi-Fi)")
     p.add_argument("-d", "--device", type=int, default=0, help="индекс USB-камеры")
-    p.add_argument("--width", type=int, default=512, help="ширина кадра (сборка/USB)")
-    p.add_argument("--height", type=int, default=512, help="высота кадра")
-    p.add_argument("-o", "--output", default="snapshots", help="папка снимков")
+    p.add_argument("--width", type=int, default=512)
+    p.add_argument("--height", type=int, default=512)
+    p.add_argument("-o", "--output", default="snapshots", help="папка снимков/видео")
     p.add_argument("--hb", type=float, default=2.0, help="интервал heartbeat, сек")
-    p.add_argument("--list-usb", action="store_true", help="список USB-устройств и выход")
+    p.add_argument("--list-usb", action="store_true", help="список USB-камер")
     args = p.parse_args()
-
     if args.list_usb:
         list_usb()
-        return
-
-    run(
-        mode=args.mode,
-        sensor_ip=args.ip,
-        device=args.device,
-        width=args.width,
-        height=args.height,
-        output=args.output,
-        hb_interval=args.hb,
-    )
+        return 0
+    return run(args)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
