@@ -138,8 +138,14 @@ table tr.best{background:rgba(26,127,55,.15)}
   <details>
     <summary>Дополнительно: настройка сигнала (если датчик молчит)</summary>
     <div>
+      <div class="row" style="border:1px solid var(--accent);border-radius:6px;padding:10px">
+        <label style="display:grid;gap:4px"><b>Файл старт-пакета data194 (из APK: assets/licence/data194, 2048 байт)</b>
+          <input type="file" id="heartFile"></label>
+        <span id="heartInfo" class="warn">не загружен — шлётся приближённый пакет, датчик, скорее всего, не заработает</span>
+        <small>Как в приложении: пакет 1037 байт = заголовок 13 байт + первые 1024 байта файла. Вторая половина файла (1024..2047) — пакет «unable»/стоп, отправляется при отключении. Период 2000 мс.</small>
+      </div>
       <div class="row">
-        <label>Период, мс <input type="number" id="hb" value="1000" min="100" step="100"></label>
+        <label>Период, мс <input type="number" id="hb" value="2000" min="100" step="100"></label>
         <label>Вариант блока
           <select id="mode">
             <option value="7" selected>07 — обычная передача изображения (рекомендуется)</option>
@@ -431,12 +437,29 @@ function parseHex(s,n,name){
   return a;
 }
 
-let cfg=null;
+let cfg=null, heartFile=null;
+function heartPayload(second){ return heartFile.subarray(second?1024:0,(second?1024:0)+1024); }
+function realHeartPacket(second){
+  const b=new Uint8Array(HDR+PKT); // нули, как new byte[1037] в приложении
+  b.set(cfg.hdr,0); b.set(heartPayload(second),HDR); return b;
+}
+document.addEventListener("DOMContentLoaded",()=>{
+  const fi=document.getElementById("heartFile"); if(!fi) return;
+  fi.onchange=async()=>{
+    const f=fi.files[0]; if(!f) return;
+    const u=new Uint8Array(await f.arrayBuffer()), info=document.getElementById("heartInfo");
+    if(u.length<1024){ heartFile=null; info.className="err"; info.textContent=`Файл слишком мал: ${u.length} байт (нужно 2048)`; return; }
+    heartFile=u.length>=2048?u.slice(0,2048):(()=>{const x=new Uint8Array(2048); x.set(u); return x;})();
+    info.className="ok"; info.textContent=`Загружен ${f.name}: ${u.length} байт. Старт-пакет = приложение.`;
+    log(`data194 загружен (${u.length} байт) — шлётся точный старт-пакет приложения`,"ok");
+  };
+});
 function readCfg(){
   cfg={hdr:parseHex($("hdr").value,HDR,"Заголовок пакета"),pre:parseHex($("pre").value,14,"Начало блока"),
        b15:parseHex($("b15").value,1,"Байт 15")[0],mode:$("mode").value};
 }
 function heartbeat(){
+  if(heartFile){ hbCount++; return realHeartPacket(false); }
   const b=new Uint8Array(HDR+PKT).fill(0xFF);
   b.set(cfg.hdr,0); b.set(cfg.pre,HDR);
   const v=cfg.mode==="alt"?(hbCount%2?8:7):+cfg.mode;
@@ -456,13 +479,14 @@ function resumeHB(){ if(run && !hbTimer){ hbTimer=setInterval(sendHB,hbMs); } }
 
 // собрать блок сигнала с переопределением mode/b15/одного байта заголовка
 function buildBlockFor(combo){
-  const b=new Uint8Array(HDR+PKT).fill(0xFF);
+  const b=heartFile?realHeartPacket(false):new Uint8Array(HDR+PKT).fill(0xFF);
   const hdr2=cfg.hdr.slice();
   if(combo.hdrVal!==null && combo.hdrVal!==undefined) hdr2[combo.hdrIdx]=combo.hdrVal;
   const pre2=cfg.pre.slice();
   if(combo.preVal!==null && combo.preVal!==undefined) pre2[combo.preIdx]=combo.preVal;
-  b.set(hdr2,0); b.set(pre2,HDR);
-  b[HDR+14]=combo.mode; b[HDR+15]=combo.b15;
+  b.set(hdr2,0);
+  if(!heartFile){ b.set(pre2,HDR); b[HDR+14]=combo.mode; b[HDR+15]=combo.b15; }
+  else{ if(combo.preVal!==null&&combo.preVal!==undefined) b[HDR+combo.preIdx]=combo.preVal; if(combo.b15!==cfg.b15||combo.mode!=cfg.mode){ b[HDR+14]=combo.mode; b[HDR+15]=combo.b15; } }
   return b;
 }
 
@@ -561,6 +585,7 @@ $("conn").onclick=async()=>{
   }
 };
 $("disc").onclick=async()=>{
+  try{ if(heartFile&&dev){ readCfg(); await sendRaw(realHeartPacket(true)); } }catch(e){}
   stopped();
   try{ await dev.releaseInterface(0); await dev.close(); }catch(e){}
   log("Отключено");
