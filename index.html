@@ -172,7 +172,8 @@ table tr.best{background:rgba(26,127,55,.15)}
   <div class="row">
     <label>Байт 15, hex от <input type="text" class="mono" id="sw-b15min" value="00" style="width:60px"></label>
     <label>до <input type="text" class="mono" id="sw-b15max" value="FF" style="width:60px"></label>
-    <label>шаг <input type="number" id="sw-b15step" value="16" min="1" max="255" style="width:70px"></label>
+    <label>шаг <input type="number" id="sw-b15step" value="1" min="1" max="255" style="width:70px"></label>
+    <small>Шаг 1 = перебрать все 256 значений байта.</small>
   </div>
   <div class="row">
     <label><input type="checkbox" id="sw-hdrvary"> также перебирать байт заголовка №</label>
@@ -182,22 +183,31 @@ table tr.best{background:rgba(26,127,55,.15)}
     <label>шаг <input type="number" id="sw-hdrstep" value="32" min="1" max="255" style="width:70px"></label>
   </div>
   <div class="row">
-    <label>Выдержка на комбинацию, мс <input type="number" id="sw-dwell" value="1500" min="200" step="100"></label>
+    <label>Частота отправки сигнала во время теста, мс <input type="number" id="sw-freq" value="300" min="50" step="50"></label>
+    <label>Выдержка (ожидание ответа) на комбинацию, мс <input type="number" id="sw-dwell" value="1500" min="200" step="100"></label>
   </div>
   <div class="row">
     <button class="primary" id="swStart">Запустить перебор</button>
     <button id="swStop" disabled>Остановить</button>
+    <button id="swSave" disabled>Сохранить результаты в файл (CSV)</button>
     <span id="swProgress" class="t">—</span>
+  </div>
+  <div class="row">
+    <strong>Комбинаций:</strong> <span id="swCombosCount">—</span>
+    <strong>Примерное время всего теста:</strong> <span id="swEstTime">—</span>
   </div>
 </section>
 
 <section class="panel">
-  <strong>График откликов</strong>
-  <div class="legend">
-    <span><i class="sw" style="background:#2f8fb0"></i>всего пакетов AA 55 за комбинацию</span>
-    <span><i class="sw" style="background:#1a7f37"></i>из них тип 0 (изображение)</span>
-  </div>
-  <canvas id="swChart" width="800" height="160" style="background:var(--panel);border:1px solid var(--line)"></canvas>
+  <strong>График 1 — каналы с изображением (пакеты типа 0)</strong>
+  <small>Сколько пакетов типа 0 пришло в ответ на каждую комбинацию. Пик здесь — явный кандидат на рабочий сигнал.</small>
+  <canvas id="swChartImg" width="800" height="130" style="background:#000;border:1px solid var(--line)"></canvas>
+</section>
+
+<section class="panel">
+  <strong>График 2 — каналы без изображения (ответ есть, но не тип 0)</strong>
+  <small>Пакеты AA 55 типа 1/2/прочие, пришедшие в ответ, но без изображения — датчик реагирует, но не так, как нужно.</small>
+  <canvas id="swChartNoImg" width="800" height="130" style="background:#000;border:1px solid var(--line)"></canvas>
 </section>
 
 <section class="panel">
@@ -451,19 +461,41 @@ function addSweepRow(r){
   $("swTable").parentElement.scrollTop=1e9;
 }
 
-function drawChart(){
-  const c=$("swChart"), ctx=c.getContext("2d");
+function drawBarChart(canvasId,values,color){
+  const c=$(canvasId), ctx=c.getContext("2d");
   ctx.clearRect(0,0,c.width,c.height);
-  if(!sweepResults.length) return;
-  const maxV=Math.max(1,...sweepResults.map(r=>Math.max(r.pk,r.t0)));
-  const n=sweepResults.length, w=c.width, h=c.height, bw=Math.max(1,w/n);
-  sweepResults.forEach((r,i)=>{
-    const x=i*bw;
-    const hPk=(r.pk/maxV)*(h-4), hT0=(r.t0/maxV)*(h-4);
-    ctx.fillStyle="#2f8fb0"; ctx.fillRect(x,h-hPk,Math.max(1,bw-1),hPk);
-    ctx.fillStyle="#1a7f37"; ctx.fillRect(x,h-hT0,Math.max(1,bw-1),hT0);
+  if(!values.length) return;
+  const maxV=Math.max(1,...values);
+  const n=values.length, w=c.width, h=c.height, bw=Math.max(1,w/n);
+  ctx.fillStyle=color;
+  values.forEach((v,i)=>{
+    const x=i*bw, hv=(v/maxV)*(h-4);
+    ctx.fillRect(x,h-hv,Math.max(1,bw-1),hv);
   });
+  ctx.fillStyle="#8794a1"; ctx.font="11px monospace";
+  ctx.fillText("макс.: "+maxV,6,14);
 }
+function drawCharts(){
+  drawBarChart("swChartImg", sweepResults.map(r=>r.t0), "#1a7f37");
+  drawBarChart("swChartNoImg", sweepResults.map(r=>r.pk-r.t0), "#2f8fb0");
+}
+
+function fmtMs(ms){
+  const s=Math.round(ms/1000);
+  if(s<60) return s+" с";
+  const m=Math.floor(s/60), r=s%60;
+  return `${m} мин ${r} с`;
+}
+function updateEstimate(){
+  let combos;
+  try{ combos=buildCombos(); }catch(e){ $("swCombosCount").textContent="—"; $("swEstTime").textContent="—"; return; }
+  const dwell=Math.max(200,+$("sw-dwell").value||1500);
+  $("swCombosCount").textContent=combos.length>800?`${combos.length} (слишком много, максимум 800)`:combos.length;
+  $("swEstTime").textContent=fmtMs(combos.length*dwell);
+}
+["sw-m7","sw-m8","sw-b15min","sw-b15max","sw-b15step","sw-hdrvary","sw-hdrmin","sw-hdrmax","sw-hdrstep","sw-dwell"]
+  .forEach(id=>$(id).addEventListener("input",updateEstimate));
+$("sw-hdridx").addEventListener("change",updateEstimate);
 
 function highlightBest(){
   if(!sweepResults.length) return;
@@ -486,14 +518,15 @@ async function runSweep(){
   if(combos.length>800){ log(`Слишком много комбинаций (${combos.length}). Сузьте диапазоны или увеличьте шаг — максимум 800 за один запуск.`,"err"); return; }
   if(!combos.length){ log("Нет ни одной комбинации для перебора — проверьте диапазоны.","err"); return; }
 
-  sweepResults=[]; $("swTable").querySelector("tbody").innerHTML=""; drawChart();
+  sweepResults=[]; $("swTable").querySelector("tbody").innerHTML=""; drawCharts();
   sweepRunning=true; sweepStop=false;
-  $("swStart").disabled=true; $("swStop").disabled=false;
+  $("swStart").disabled=true; $("swStop").disabled=false; $("swSave").disabled=true;
   log(`Стресс-тест: запуск перебора, комбинаций — ${combos.length}`,"warn");
   pauseHB();
 
   const dwell=Math.max(200,+$("sw-dwell").value||1500);
-  const innerHb=Math.max(100,+$("hb").value||1000);
+  const innerHb=Math.max(50,+$("sw-freq").value||300);
+  updateEstimate();
 
   for(let idx=0; idx<combos.length && !sweepStop; idx++){
     const combo=combos[idx];
@@ -508,8 +541,9 @@ async function runSweep(){
     }
     const w=curWindow; curWindow=null;
     const res={idx, mode:combo.mode, b15:combo.b15, hdrIdx:combo.hdrIdx, hdrVal:combo.hdrVal, pk:w.pk, t0:w.t[0], t1:w.t[1], t2:w.t[2], bad:w.bad};
-    sweepResults.push(res); addSweepRow(res); drawChart();
-    $("swProgress").textContent=`${idx+1} / ${combos.length}`;
+    sweepResults.push(res); addSweepRow(res); drawCharts();
+    $("swSave").disabled=false;
+    $("swProgress").textContent=`${idx+1} / ${combos.length} — осталось ~${fmtMs((combos.length-idx-1)*dwell)}`;
   }
   curWindow=null; sweepRunning=false;
   $("swStart").disabled=false; $("swStop").disabled=true;
@@ -517,10 +551,31 @@ async function runSweep(){
   highlightBest();
   resumeHB();
 }
+function exportSweepCSV(){
+  if(!sweepResults.length){ log("Нет результатов для сохранения — сначала запустите перебор.","err"); return; }
+  const header=["idx","mode","b15_hex","hdr_idx","hdr_val_hex","pk_total","type0","type1","type2","bad"];
+  const lines=[header.join(";")];
+  for(const r of sweepResults){
+    lines.push([
+      r.idx, r.mode, "0x"+r.b15.toString(16).padStart(2,"0"),
+      r.hdrVal===null?"":r.hdrIdx, r.hdrVal===null?"":"0x"+r.hdrVal.toString(16).padStart(2,"0"),
+      r.pk, r.t0, r.t1, r.t2, r.bad
+    ].join(";"));
+  }
+  const csv="\uFEFF"+lines.join("\n"); // BOM — чтобы Excel на Windows сразу понял кодировку UTF-8
+  const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`chison_stress_${new Date().toISOString().replace(/[:.]/g,"-")}.csv`;
+  a.click();
+  log(`Результаты сохранены: ${sweepResults.length} строк`,"ok");
+}
+$("swSave").onclick=exportSweepCSV;
 $("swStart").onclick=runSweep;
 $("swStop").onclick=()=>{ sweepStop=true; };
 
 log(navigator.usb?"WebUSB доступен.":"WebUSB недоступен","t");
+updateEstimate();
 paint();
 </script>
 </body>
