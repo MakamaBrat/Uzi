@@ -54,6 +54,8 @@ table tr.best{background:rgba(26,127,55,.15)}
 .an-n.skipped{stroke-dasharray:4 3;opacity:.55}
 .an-n.ghost{stroke-dasharray:5 4}
 .an-n.fail{stroke:var(--err);stroke-dasharray:5 4}
+.an-n.stopped{stroke:var(--warn);stroke-dasharray:3 3}
+.an-n.paused{stroke:var(--warn);stroke-width:3;stroke-dasharray:6 4}
 .an-t{fill:var(--text);font:600 12.5px system-ui,sans-serif}
 .an-s{fill:var(--muted);font:11px system-ui,sans-serif}
 .an-s2{fill:var(--muted);font:10px system-ui,sans-serif;opacity:.85}
@@ -67,6 +69,15 @@ table tr.best{background:rgba(26,127,55,.15)}
 .bar .fl.bad{background:var(--err)}.bar .fl.ok{background:var(--ok)}
 .stat.sel{outline:2px solid var(--accent)}
 .opt{display:grid;gap:2px}
+.stchip{border-radius:14px;padding:5px 10px;font-size:.78rem;display:flex;align-items:center;gap:6px}
+.stchip .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+.stchip.running .dot{background:var(--warn)}
+.stchip.paused .dot{background:var(--warn);box-shadow:0 0 0 2px var(--warn)}
+.stchip.done .dot,.stchip.skipped .dot{background:var(--muted)}
+.stchip.hit .dot{background:var(--ok)}
+.stchip.stopped .dot{background:var(--warn);box-shadow:0 0 0 2px var(--warn)}
+.stchip.sel{outline:2px solid var(--accent)}
+#anResumeBox{border-color:var(--warn)}
 </style>
 </head>
 <body>
@@ -273,6 +284,23 @@ table tr.best{background:rgba(26,127,55,.15)}
 <div class="tabpanel" id="tab-an">
 
 <section class="panel">
+  <strong>Прогресс анализатора</strong>
+  <small>Прогресс автоматически сохраняется в этом браузере. Его можно также сохранить в файл на компьютере и потом загрузить обратно — в этом же браузере, в другом браузере или на другом компьютере.</small>
+  <div class="row">
+    <button id="anSaveFile">💾 Сохранить прогресс в файл</button>
+    <button id="anLoadFileBtn">📂 Загрузить прогресс из файла</button>
+    <input type="file" id="anLoadFile" accept="application/json,.json" style="display:none">
+  </div>
+  <div id="anResumeBox" style="display:none">
+    <small id="anResumeInfo" class="t">—</small>
+    <div class="row">
+      <button class="primary" id="anResumeBtn">Продолжить с сохранённого места</button>
+      <button id="anResumeClear">Удалить сохранённый прогресс</button>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
   <strong>Анализатор: сколько комбинаций и сколько ждать</strong>
   <small>Считает, сколько комбинаций нужно проверить, чтобы перебрать всё пространство, и строит дерево оптимизированного поиска: грубый проход → уточнение вокруг ответивших → запасной полный перебор. «Запустить по дереву» выполняет этапы сам; после каждого этапа дерево пересчитывается (факт вместо плана, новая выдержка, остаток времени). Нужно быть подключённым (вкладка «Связь»).</small>
   <fieldset id="anCtl" style="border:0;padding:0;margin:0;min-width:0;display:grid;gap:10px">
@@ -321,11 +349,15 @@ table tr.best{background:rgba(26,127,55,.15)}
   <strong>Дерево поиска</strong>
   <div class="row">
     <button class="primary" id="anStart">Запустить по дереву</button>
+    <button id="anPause" disabled>⏸ Пауза</button>
     <button id="anStop" disabled>Остановить</button>
     <button id="anApply" disabled>Сделать найденное основным сигналом</button>
     <span id="anElapsed" class="t">—</span>
   </div>
   <div class="stats" id="anSummary"></div>
+  <strong style="font-size:.85rem">Этапы (нажмите, чтобы посмотреть подробности)</strong>
+  <div class="row" id="anStageMenu"></div>
+  <div class="panel" id="anStageDetail" style="display:none;background:var(--bg)"></div>
   <div style="overflow-x:auto" id="anTreeWrap"></div>
   <div class="legend">
     <span><i class="sw" style="background:var(--warn)"></i>идёт</span>
@@ -596,7 +628,8 @@ $("genRandom").onclick=()=>{
 };
 
 /* ==================== СТРЕСС-ТЕСТ / ПЕРЕБОР ==================== */
-let sweepRunning=false, sweepStop=false, sweepResults=[];
+let sweepRunning=false, sweepStop=false, sweepPaused=false, sweepResults=[];
+const sleepW=ms=>new Promise(r=>setTimeout(r,ms));
 
 function buildCombos(){
   const modes=[]; if($("sw-m7").checked) modes.push(7); if($("sw-m8").checked) modes.push(8);
@@ -707,13 +740,15 @@ async function runSweep(opts={}){
   updateEstimate();
 
   for(let idx=0; idx<combos.length && !sweepStop; idx++){
+    while(sweepPaused && !sweepStop) await sleepW(200);
+    if(sweepStop) break;
     const combo=combos[idx];
     const block=buildBlockFor(combo);
     const start=Date.now();
     curWindow={pk:0,t:[0,0,0],bad:0,start,first:null};
     await sendRaw(block);
     let nextSend=start+innerHb;
-    while(Date.now()-start<dwell && !sweepStop){
+    while(Date.now()-start<dwell && !sweepStop && !sweepPaused){
       if(stopImg && curWindow.t[0]>0) break;
       if(Date.now()>=nextSend){ await sendRaw(block); nextSend+=innerHb; }
       await new Promise(r=>setTimeout(r,50));
@@ -804,6 +839,8 @@ $("swStop").onclick=()=>{ sweepStop=true; };
 /* ==================== АНАЛИЗАТОР ==================== */
 const OVH=25, PRIO=[0x0A,0x00,0xFF,0x01];
 let anRunning=false, anAbort=false, anStat={}, anAll=[], anBest=null, anDwell=0, anTested=new Set(), anStart=0;
+let anStageRows={}, anCurrentStage=null, anSelectedStage=null, anTotalElapsedMs=0;
+const AN_KEY="chison_analyzer_progress_v1";
 const fmtN=n=>n.toLocaleString("ru");
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const esc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;");
@@ -878,7 +915,7 @@ function buildPlan(P,dwell){
   let cum=0;
   trunk.forEach(x=>{
     const st=anStat[x.id];
-    x.eff=(st&&(st.status==="done"||st.status==="hit"))?st.ms:(st&&st.status==="skipped"?0:x.t);
+    x.eff=(st&&(st.status==="done"||st.status==="hit"||st.status==="stopped"))?st.ms:(st&&st.status==="skipped"?0:x.t);
     cum+=x.eff; x.cum=cum;
   });
   fall.forEach(x=>{ x.t=c(x.n); });
@@ -891,8 +928,9 @@ function buildPlan(P,dwell){
 function anLines(nd,P,dwell,cumTxt){
   const st=anStat[nd.id]; let l3;
   if(st&&(st.status==="done"||st.status==="hit")) l3=`факт: ${fmtN(st.n)} комб · ${fmtDur(st.ms)} · ответов ${st.resp}`;
+  else if(st&&st.status==="stopped") l3=`остановлено: ${fmtN(st.n)} из ${fmtN(nd.n)} комб · ответов ${st.resp} · продолжится при запуске`;
   else if(st&&st.status==="skipped") l3="пропущено: "+(st.reason||"не требуется");
-  else if(st&&st.status==="running") l3=`идёт… ${fmtN(st.n)} комб · план ${fmtDur(nd.t)}`;
+  else if(st&&st.status==="running") l3=(sweepPaused?"пауза… ":"идёт… ")+`${fmtN(st.n)} комб · план ${fmtDur(nd.t)}`;
   else l3=`план: ${fmtN(nd.n)} комб · ${fmtDur(nd.t)}`+(cumTxt?` · накопл. ${cumTxt}`:"");
   const d=st&&st.dwell?st.dwell:dwell;
   let l4=`выдержка ${d} мс`+(P.opt.early?" · стоп на изображении":"");
@@ -906,6 +944,7 @@ function nodeSvg(x,y,w,h,cls,lines){
   lines.forEach((t,i)=>{ if(t) o+=`<text class="${cl[i]}" x="${x+10}" y="${y+ys[i]}">${esc(t)}</text>`; });
   return o;
 }
+function anNodeCls(st){ return st?(st.status==="running"&&sweepPaused?"paused":st.status):""; }
 function anTree(plan,P,dwell){
   const NH=78,GAP=36,STEP=NH+GAP,X=10,NW=310,FX=380,FW=230,FH=46,W=680,CX=640;
   const m=plan.trunk.length, hasFall=plan.fall.length>0;
@@ -913,7 +952,7 @@ function anTree(plan,P,dwell){
   let y=10; const failC=[];
   plan.trunk.forEach((nd,i)=>{
     const st=anStat[nd.id];
-    s+=nodeSvg(X,y,NW,NH,st?st.status:"",anLines(nd,P,dwell,fmtDur(nd.cum)));
+    s+=nodeSvg(X,y,NW,NH,anNodeCls(st),anLines(nd,P,dwell,fmtDur(nd.cum)));
     if(hasFall){
       const fy=y+(NH-FH)/2, grp=nd.id[0]==="H"?"H":"R";
       const pruned=plan.trunk.slice(i+1).filter(x=>x.id[0]===grp).reduce((a,x)=>a+x.n,0);
@@ -930,13 +969,13 @@ function anTree(plan,P,dwell){
     y+=STEP;
   });
   const stC=anStat.C;
-  s+=nodeSvg(X,y,NW,54,stC?stC.status:"",["✓ Изображение (на любом этапе)",stC&&stC.note?stC.note:"подтверждение: пауза 2 с + повтор 3 с → основной сигнал"]);
+  s+=nodeSvg(X,y,NW,54,anNodeCls(stC),["✓ Изображение (на любом этапе)",stC&&stC.note?stC.note:"подтверждение: пауза 2 с + повтор 3 с → основной сигнал"]);
   let fy2=y, bottom=y+54;
   if(hasFall){
     const cs=[];
     plan.fall.forEach((nd,i)=>{
       const st=anStat[nd.id], top=fy2+i*76, cumTxt=null;
-      s+=nodeSvg(FX,top,FW,68,st?st.status:"ghost",anLines(nd,P,dwell,cumTxt).slice(0,3));
+      s+=nodeSvg(FX,top,FW,68,st?anNodeCls(st):"ghost",anLines(nd,P,dwell,cumTxt).slice(0,3));
       cs.push(top+34); bottom=Math.max(bottom,top+68);
     });
     s+=`<path class="an-edge" d="M${CX} ${failC[0]} V${cs[cs.length-1]}"/>`;
@@ -965,6 +1004,7 @@ function anRender(){
     `<div class="stat"><b>${fmtDur(plan.remaining)}</b><span>осталось по типичному пути</span></div>`+
     `<div class="stat"><b>${dwell} мс</b><span>выдержка сейчас${dwell<P.dwell?` (было ${P.dwell})`:""}</span></div>`;
   $("anTreeWrap").innerHTML=anTree(plan,P,dwell);
+  anRenderStageMenu(plan);
   // столбики
   const items=[["Наивно · худший случай",plan.naive.worstMs,"bad"],["Наивно · в среднем",plan.naive.avgMs,"bad"],
     ["По дереву · типичный путь",plan.typical,"ok"],["По дереву · худший (с откатом)",plan.worst,"ok"]];
@@ -985,19 +1025,33 @@ function anCenters(P,dim){
   return out;
 }
 async function anExec(id,combos,P){
+  anCurrentStage=id;
+  // уже пройдено в этой или в восстановленной сессии — не повторяем отправку
+  const prior=anStat[id];
+  if(prior&&(prior.status==="done"||prior.status==="hit"||prior.status==="skipped")){
+    anRender();
+    return {found:prior.status==="hit",results:anStageRows[id]||[]};
+  }
   combos=combos.filter(c=>!anTested.has(anKey(c)));
-  if(!combos.length){ anStat[id]={status:"skipped",n:0,ms:0,resp:0,reason:"всё уже проверено"}; anRender(); return {found:false,results:[]}; }
+  if(!combos.length){ anStat[id]={status:"skipped",n:0,ms:0,resp:0,reason:"всё уже проверено"}; anSaveProgress(); anRender(); return {found:false,results:[]}; }
   anStat[id]={status:"running",n:combos.length,ms:0,resp:0,dwell:anDwell}; anRender();
-  const t0=Date.now(), all=[];
+  const t0=Date.now(), all=anStageRows[id]||[];
   for(let i=0;i<combos.length&&!anAbort;i+=800){
     const r=await runSweep({combos:combos.slice(i,i+800),dwell:anDwell,stopImg:P.opt.early});
     if(!r){ anAbort=true; break; }
     r.results.forEach(x=>{ anTested.add(anKey(x)); all.push(x); anAll.push(x); });
+    anStageRows[id]=all;
+    anStat[id]={status:"running",n:combos.length,ms:Date.now()-t0,resp:all.filter(x=>x.pk>0).length,dwell:anDwell};
+    anSaveProgress(); anRender();
     if(r.foundStop) break;
     if(r.stopped){ anAbort=true; break; }
   }
+  anStageRows[id]=all;
   const resp=all.filter(x=>x.pk>0).length, fnd=all.some(x=>x.t0>0);
-  anStat[id]={status:fnd?"hit":"done",n:all.length,ms:Date.now()-t0,resp,dwell:anDwell};
+  // реальный "Стоп" (не пауза) прерывает выполнение раньше плана — не считаем этап завершённым,
+  // чтобы при продолжении он досчитал оставшиеся комбинации, а не был пропущен как готовый
+  anStat[id]=anAbort&&!fnd?{status:"stopped",n:all.length,ms:Date.now()-t0,resp,dwell:anDwell}
+                          :{status:fnd?"hit":"done",n:all.length,ms:Date.now()-t0,resp,dwell:anDwell};
   if(fnd) anBest=all.slice().sort((a,b)=>b.t0-a.t0||b.pk-a.pk)[0];
   // адаптивная выдержка: пересчитываем оставшиеся этапы по измеренной задержке ответа
   if(P.opt.adapt&&!fnd){
@@ -1007,7 +1061,7 @@ async function anExec(id,combos,P){
       if(eff<anDwell){ log(`Анализатор: выдержка ${anDwell} → ${eff} мс (задержка ответа до ${mx} мс)`,"warn"); anDwell=eff; }
     }
   }
-  anRender();
+  anSaveProgress(); anRender();
   return {found:fnd,results:all};
 }
 async function anPlanRun(P){
@@ -1085,29 +1139,150 @@ async function anPlanRun(P){
     log("Анализатор: изображение не получено во всём проверенном пространстве. Следующие гипотезы: другие байты заголовка, начало блока (байты 0–13).","warn");
   }
 }
-async function anRun(){
+
+/* ==================== МЕНЮ ЭТАПОВ ==================== */
+function anStageLabel(id){ return id==="C"?"✓":id; }
+function anRenderStageMenu(plan){
+  const all=[...plan.trunk, ...plan.fall, {id:"C",title:"Подтверждение найденного",sub:"пауза 2 с + повтор 3 с"}];
+  $("anStageMenu").innerHTML=all.map(nd=>{
+    const st=anStat[nd.id], cls=st?anNodeCls(st):"";
+    return `<button class="stchip ${cls}${anSelectedStage===nd.id?" sel":""}" data-id="${nd.id}" title="${esc(nd.title)}"><span class="dot"></span>${esc(anStageLabel(nd.id))}</button>`;
+  }).join("");
+  $("anStageMenu").querySelectorAll(".stchip").forEach(b=>b.onclick=()=>{
+    anSelectedStage=(anSelectedStage===b.dataset.id)?null:b.dataset.id;
+    anRenderStageMenu(plan);
+  });
+  anRenderStageDetail(all);
+}
+function anRenderStageDetail(all){
+  const box=$("anStageDetail");
+  if(!anSelectedStage){ box.style.display="none"; box.innerHTML=""; return; }
+  const nd=all.find(x=>x.id===anSelectedStage);
+  const st=anStat[anSelectedStage];
+  const rows=anStageRows[anSelectedStage]||[];
+  let html=`<strong>${esc(nd?nd.title:anSelectedStage)}</strong><br><small class="t">${esc(nd?nd.sub:"")}</small>`;
+  html+=st?`<div class="t" style="margin-top:6px">статус: ${esc(st.status)}`+(st.resp!=null?` · ответов: ${st.resp}`:"")+(st.n!=null?` · комбинаций: ${fmtN(st.n)}`:"")+(st.ms?` · время: ${fmtDur(st.ms)}`:"")+(st.reason?` · ${esc(st.reason)}`:"")+`</div>`
+            :`<div class="t" style="margin-top:6px">этап ещё не выполнялся</div>`;
+  if(rows.length){
+    const shown=rows.slice(-60);
+    html+=`<div class="tblwrap" style="max-height:200px;margin-top:8px"><table><thead><tr><th>mode</th><th>b15</th><th>hdr</th><th>pre</th><th>pk</th><th>тип0</th></tr></thead><tbody>`+
+      shown.map(r=>`<tr${r.t0>0?' class="best"':""}><td>${r.mode}</td><td>0x${hx(r.b15)}</td><td>${r.hdrVal==null?"—":"№"+r.hdrIdx+"=0x"+hx(r.hdrVal)}</td><td>${r.preVal==null?"—":"№"+r.preIdx+"=0x"+hx(r.preVal)}</td><td>${r.pk}</td><td>${r.t0}</td></tr>`).join("")+
+      `</tbody></table></div>`+(rows.length>60?`<small class="t">показаны последние 60 из ${fmtN(rows.length)}</small>`:"");
+  }
+  box.innerHTML=html; box.style.display="";
+}
+
+/* ==================== СОХРАНЕНИЕ / ВОССТАНОВЛЕНИЕ ПРОГРЕССА ==================== */
+function anInputsSnapshot(){
+  return {"an-m7":$("an-m7").checked,"an-m8":$("an-m8").checked,
+    "an-hdr":$("an-hdr").checked,"an-hdridx":$("an-hdridx").value,
+    "an-lic":$("an-lic").checked,"an-licidx":$("an-licidx").value,
+    "an-dwell":$("an-dwell").value,"an-sa":$("an-sa").value,"an-k":$("an-k").value,
+    "an-o-early":$("an-o-early").checked,"an-o-prio":$("an-o-prio").checked,
+    "an-o-hier":$("an-o-hier").checked,"an-o-adapt":$("an-o-adapt").checked};
+}
+function anCompactRow(x){ return {mode:x.mode,b15:x.b15,hdrIdx:x.hdrIdx,hdrVal:x.hdrVal,preIdx:x.preIdx,preVal:x.preVal,pk:x.pk,t0:x.t0,firstMs:x.firstMs}; }
+function anSnapshotData(){
+  const stageRows={}; for(const k in anStageRows) stageRows[k]=anStageRows[k].map(anCompactRow);
+  return {v:1, ts:Date.now(), inputs:anInputsSnapshot(), anStat, anBest, anDwell,
+    anAll:anAll.map(anCompactRow), anTested:[...anTested], anStageRows:stageRows,
+    elapsedMs:anRunning?Date.now()-anStart:anTotalElapsedMs};
+}
+function anSaveProgress(){
+  try{ localStorage.setItem(AN_KEY, JSON.stringify(anSnapshotData())); }catch(e){ /* хранилище недоступно или переполнено — тихо пропускаем, перебор продолжается */ }
+}
+function anLoadProgress(){ try{ const r=localStorage.getItem(AN_KEY); return r?JSON.parse(r):null; }catch(e){ return null; } }
+function anClearProgress(){ try{ localStorage.removeItem(AN_KEY); }catch(e){} $("anResumeBox").style.display="none"; }
+function anValidateProgress(data){
+  return !!(data && data.v===1 && data.inputs && data.anStat && Array.isArray(data.anAll) && Array.isArray(data.anTested));
+}
+function anExportFile(){
+  if(!Object.keys(anStat).length){ log("Нечего сохранять — анализатор ещё не проверил ни одной комбинации","err"); return; }
+  const data=anSnapshotData();
+  const blob=new Blob([JSON.stringify(data)],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`chison_analyzer_progress_${new Date().toISOString().replace(/[:.]/g,"-")}.json`;
+  a.click();
+  log(`Прогресс анализатора сохранён в файл: этапов — ${Object.keys(anStat).length}, комбинаций — ${anTested.size}`,"ok");
+}
+function anImportFile(file){
+  if(anRunning){ log("Сначала остановите или поставьте на паузу анализатор","err"); return; }
+  const reader=new FileReader();
+  reader.onload=()=>{
+    let data;
+    try{ data=JSON.parse(reader.result); }catch(e){ log("Файл повреждён или это не JSON прогресса анализатора","err"); return; }
+    if(!anValidateProgress(data)){ log("Файл не похож на сохранённый прогресс анализатора","err"); return; }
+    try{ localStorage.setItem(AN_KEY, JSON.stringify(data)); }catch(e){}
+    anResumeBanner();
+    log(`Прогресс загружен из файла: этапов — ${Object.keys(data.anStat).length}, комбинаций — ${(data.anTested||[]).length}. Нажмите «Продолжить с сохранённого места».`,"ok");
+  };
+  reader.onerror=()=>log("Не удалось прочитать файл","err");
+  reader.readAsText(file);
+}
+function anApplyProgress(data){
+  for(const id in data.inputs){ const el=$(id); if(!el) continue; if(el.type==="checkbox") el.checked=!!data.inputs[id]; else el.value=data.inputs[id]; }
+  anStat=data.anStat||{}; anBest=data.anBest||null; anDwell=data.anDwell||0;
+  anAll=(data.anAll||[]).slice(); anTested=new Set(data.anTested||[]);
+  anStageRows={}; for(const k in (data.anStageRows||{})) anStageRows[k]=data.anStageRows[k].slice();
+  anTotalElapsedMs=data.elapsedMs||0; anSelectedStage=null;
+  $("anApply").disabled=!(anStat.C&&anStat.C.status==="hit");
+  anRender();
+}
+function anResumeBanner(){
+  const data=anLoadProgress();
+  if(!data){ $("anResumeBox").style.display="none"; return; }
+  const n=Object.keys(data.anStat||{}).length, tested=(data.anTested||[]).length;
+  const found=data.anStat&&data.anStat.C&&data.anStat.C.status==="hit";
+  const dt=new Date(data.ts).toLocaleString("ru-RU");
+  $("anResumeInfo").textContent=`${dt} · этапов отмечено: ${n} · проверено комбинаций: ${fmtN(tested)}`+(found?" · изображение было найдено и подтверждено":"");
+  $("anResumeBox").style.display="";
+}
+
+async function anRun(resume){
   if(!run||!dev){ log("Сначала подключите датчик (вкладка «Связь»)","err"); return; }
   if(sweepRunning||anRunning){ log("Сначала остановите текущий перебор","err"); return; }
   try{ readCfg(); }catch(e){ log(e.message,"err"); return; }
   const P=anParams();
-  anRunning=true; anAbort=false; anStat={}; anAll=[]; anBest=null; anTested=new Set(); anDwell=P.dwell; anStart=Date.now();
-  $("anStart").disabled=true; $("anStop").disabled=false; $("anApply").disabled=true;
-  log("Анализатор: запуск по дереву","warn"); anRender();
+  anRunning=true; anAbort=false; sweepPaused=false; anCurrentStage=null;
+  if(!resume){ anStat={}; anAll=[]; anBest=null; anTested=new Set(); anDwell=P.dwell; anStageRows={}; anTotalElapsedMs=0; anSelectedStage=null; }
+  anStart=Date.now()-anTotalElapsedMs;
+  $("anStart").disabled=true; $("anStop").disabled=false; $("anPause").disabled=false; $("anPause").textContent="⏸ Пауза";
+  if(!(anStat.C&&anStat.C.status==="hit")) $("anApply").disabled=true;
+  $("anResumeBox").style.display="none";
+  log(resume?"Анализатор: продолжаем сохранённый прогресс":"Анализатор: запуск по дереву","warn"); anRender();
   try{ await anPlanRun(P); }catch(e){ log("Анализатор: "+e.message,"err"); }
-  anRunning=false; $("anStart").disabled=false; $("anStop").disabled=true;
-  $("anElapsed").textContent="заняло "+fmtDur(Date.now()-anStart);
-  log(anAbort?"Анализатор остановлен":"Анализатор завершён","warn"); anRender();
+  anTotalElapsedMs=Date.now()-anStart;
+  anRunning=false; sweepPaused=false;
+  $("anStart").disabled=false; $("anStop").disabled=true; $("anPause").disabled=true; $("anPause").textContent="⏸ Пауза";
+  $("anElapsed").textContent="заняло "+fmtDur(anTotalElapsedMs);
+  log(anAbort?"Анализатор остановлен":"Анализатор завершён","warn");
+  anSaveProgress(); anRender();
 }
-$("anStart").onclick=anRun;
-$("anStop").onclick=()=>{ anAbort=true; sweepStop=true; };
+$("anStart").onclick=()=>anRun(false);
+$("anPause").onclick=()=>{
+  if(!anRunning) return;
+  sweepPaused=!sweepPaused;
+  $("anPause").textContent=sweepPaused?"▶ Продолжить":"⏸ Пауза";
+  log(sweepPaused?"Анализатор: пауза":"Анализатор: продолжаем","warn");
+  if(sweepPaused) anSaveProgress();
+  anRender();
+};
+$("anStop").onclick=()=>{ anAbort=true; sweepStop=true; sweepPaused=false; $("anPause").textContent="⏸ Пауза"; };
 $("anApply").onclick=()=>{ if(anBest) applyAsMain({mode:anBest.mode,b15:anBest.b15,hdrIdx:anBest.hdrIdx,hdrVal:anBest.hdrVal,preIdx:anBest.preIdx,preVal:anBest.preVal}); };
+$("anResumeBtn").onclick=()=>{ const data=anLoadProgress(); if(!data){ log("Сохранённый прогресс не найден","err"); return; } anApplyProgress(data); anRun(true); };
+$("anResumeClear").onclick=()=>{ anClearProgress(); log("Сохранённый прогресс анализатора удалён","warn"); };
+$("anSaveFile").onclick=anExportFile;
+$("anLoadFileBtn").onclick=()=>$("anLoadFile").click();
+$("anLoadFile").onchange=(e)=>{ const f=e.target.files[0]; if(f) anImportFile(f); e.target.value=""; };
 ["an-m7","an-m8","an-hdr","an-hdridx","an-lic","an-licidx","an-dwell","an-sa","an-k","an-o-early","an-o-prio","an-o-hier","an-o-adapt"].forEach(id=>{
-  const f=()=>{ if(!anRunning){ anStat={}; anBest=null; } anRender(); };
+  const f=()=>{ if(!anRunning){ anStat={}; anBest=null; anAll=[]; anTested=new Set(); anStageRows={}; anTotalElapsedMs=0; anSelectedStage=null; } anRender(); };
   $(id).addEventListener("input",f); $(id).addEventListener("change",f);
 });
 
 log(navigator.usb?"WebUSB доступен.":"WebUSB недоступен","t");
 updateEstimate();
+anResumeBanner();
 anRender();
 paint();
 </script>
