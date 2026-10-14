@@ -96,7 +96,7 @@ table tr.best{background:rgba(26,127,55,.15)}
 
 <section class="panel">
   <strong>Как это работает</strong>
-  <small>Датчик начинает передавать изображение, только если ему регулярно (по умолчанию раз в секунду) отправлять короткий «сигнал»: 13 байт заголовка и блок из 1024 байт. Никакого секретного ключа в этом блоке нет: он всегда одинаковый (счётчик 00…0D, затем два байта, затем заполнение FF). Файл загружать не нужно, страница собирает блок сама. Если датчик «принял», он начнёт присылать пакеты, начинающиеся с AA 55. Именно по ним страница определяет статус ниже.</small>
+  <small><b>Сигнал подтверждён</b> разбором официального приложения (класс <code>UsbService.sendHeartConnect</code> и файл <code>assets/data194</code>), а не подбором. Датчик начинает передавать изображение, если ему регулярно (раз в секунду) отправлять блок из 1037 байт: 13 байт фиксированного заголовка + 1024 байта данных (счётчик 00…0D, один переменный байт — 07 или 08, байт 0A, остальное — заполнение FF). Значения уже стоят по умолчанию ниже, перебор не нужен. Файл загружать не нужно, страница собирает блок сама. Когда датчик «принял» сигнал, он начинает присылать пакеты, начинающиеся с AA 55 — по ним страница определяет статус.</small>
 </section>
 
 <section class="panel">
@@ -125,7 +125,13 @@ table tr.best{background:rgba(26,127,55,.15)}
     <div class="stat"><b id="sBytes">0</b><span>байт принято всего</span></div>
   </div>
   <canvas id="cv" width="1024" height="64" aria-label="Серое представление последних пакетов изображения"></canvas>
-  <small>Холст — грубая визуализация: последние пакеты типа 0, байты как яркость (не готовое изображение).</small>
+  <small>Верхний холст — диагностика: последние пакеты типа 0 подряд, байты как яркость (не кадр, просто чтобы видеть, что данные вообще идут).</small>
+  <canvas id="frame" width="1008" height="256" style="height:320px" aria-label="Собранный кадр по номеру строки"></canvas>
+  <div class="row">
+    <button id="frameReset">Сбросить кадр</button>
+    <label>Строк в кадре <input type="number" id="frameH" value="256" min="16" max="1024" step="16" style="width:80px"></label>
+  </div>
+  <small><b>Нижний холст — попытка собрать реальный кадр.</b> Разобрано из кода приложения: в каждом пакете типа 0 байт 4 — номер строки (линии сканирования), а байты 16–1023 (1008 байт) — яркость вдоль этой строки. Страница кладёт их в канву по строкам. Это приближение: не учтены режимы допплера/M-режима и разбиение длинной строки на два подпакета (байт 5) — для обычного серого B-режима этого обычно достаточно, чтобы увидеть силуэт. Если датчик секторный/конвексный, картинка будет прямоугольной, а не веером — это нормально для сырых данных.</small>
 </section>
 
 <section class="panel">
@@ -136,9 +142,9 @@ table tr.best{background:rgba(26,127,55,.15)}
         <label>Период, мс <input type="number" id="hb" value="1000" min="100" step="100"></label>
         <label>Вариант блока
           <select id="mode">
-            <option value="7">07 (как первая половина файла)</option>
-            <option value="8">08 (как вторая половина файла)</option>
-            <option value="alt">чередовать 07 / 08</option>
+            <option value="7" selected>07 — обычная передача изображения (рекомендуется)</option>
+            <option value="8">08 — режим приложения «заморозка кадра»</option>
+            <option value="alt">чередовать 07 / 08 (не требуется, но безопасно)</option>
           </select>
         </label>
       </div>
@@ -149,7 +155,7 @@ table tr.best{background:rgba(26,127,55,.15)}
       <label style="display:grid">Заголовок пакета, 13 байт (hex)
         <input type="text" class="mono" id="hdr" value="01 55 AA 12 34 56 78 9A FF C2 FF 03 00">
       </label>
-      <small>Блок = начало (14 байт) + вариант (байт 14) + байт 15 + 1008 байт FF. Что именно проверяет датчик, неизвестно, поэтому можно менять значения и смотреть, пойдут ли пакеты. Применяется при следующем подключении. Для автоматического перебора используйте вкладки «Генератор» и «Стресс-тест».</small>
+      <small>Блок = начало (14 байт) + вариант (байт 14) + байт 15 + 1008 байт FF. Значения по умолчанию — подтверждённые байты из официального приложения (режим «07», как при обычной передаче изображения; «08» используется приложением в режиме заморозки кадра). Менять их нужно, только если датчик всё равно молчит — тогда это, скорее всего, не байты сигнала, а что-то другое (кабель, другая модель датчика, нужна предварительная команда). Для такого диагностического перебора остаются вкладки «Генератор» и «Стресс-тест», но в норме они не нужны.</small>
       <strong>Последний отправленный пакет (первые 32 байта)</strong>
       <pre id="sent">—</pre>
     </div>
@@ -203,6 +209,11 @@ table tr.best{background:rgba(26,127,55,.15)}
 
 <!-- ==================== ВКЛАДКА: СТРЕСС-ТЕСТ ==================== -->
 <div class="tabpanel" id="tab-stress">
+
+<section class="panel" style="border-color:var(--ok)">
+  <strong class="ok">Сейчас, скорее всего, не нужно</strong>
+  <small>Рабочий сигнал уже подтверждён разбором официального приложения и стоит по умолчанию во вкладке «Связь». Эта вкладка — запасной инструмент на случай другой модели датчика или другой прошивки, где байты могут отличаться.</small>
+</section>
 
 <section class="panel">
   <strong>Перебор параметров сигнала</strong>
@@ -282,6 +293,11 @@ table tr.best{background:rgba(26,127,55,.15)}
 
 <!-- ==================== ВКЛАДКА: АНАЛИЗАТОР ==================== -->
 <div class="tabpanel" id="tab-an">
+
+<section class="panel" style="border-color:var(--ok)">
+  <strong class="ok">Сейчас, скорее всего, не нужно</strong>
+  <small>Рабочий сигнал уже подтверждён разбором официального приложения и стоит по умолчанию во вкладке «Связь». Полный перебор здесь имеет смысл только для другой модели датчика или прошивки.</small>
+</section>
 
 <section class="panel">
   <strong>Прогресс анализатора</strong>
@@ -394,6 +410,11 @@ const st={bytes:0,pk:0,t:[0,0,0],bad:0};
 const lastByType={}, t0Times=[];
 let carry=new Uint8Array(0), vis=new Uint8Array(1024*64);
 
+// сборка реального кадра: байт 4 пакета типа 0 — номер строки, байты 16..1023 — яркость вдоль строки
+const LINE_OFF=16, LINE_LEN=PKT-LINE_OFF; // 1008
+let frameW=LINE_LEN, frameH=+($("frameH")?.value||256), frameBuf=new Uint8Array(frameW*frameH), maxLineSeen=0, frameDirty=false;
+function resetFrame(){ frameH=Math.max(16,+$("frameH").value||256); frameBuf=new Uint8Array(frameW*frameH); maxLineSeen=0; frameDirty=true; }
+
 // окно измерения для генератора/стресс-теста: если не null, параллельно считаем в него
 let curWindow=null;
 
@@ -458,7 +479,11 @@ function handle(buf){
       lastByType[t]=p.slice();
       if(calBuf) calBuf.push({t:Date.now(),ty:t,h:p.slice(0,64)});
       if(curWindow&&isNovel(p)) curWindow.nov++;
-      if(t===0){ t0Times.push(Date.now()); vis.copyWithin(0,PKT); vis.set(p,vis.length-PKT); }
+      if(t===0){
+        t0Times.push(Date.now()); vis.copyWithin(0,PKT); vis.set(p,vis.length-PKT);
+        const lineIdx=p[4];
+        if(lineIdx<frameH){ frameBuf.set(p.subarray(LINE_OFF,LINE_OFF+LINE_LEN), lineIdx*frameW); if(lineIdx>maxLineSeen) maxLineSeen=lineIdx; frameDirty=true; }
+      }
       i+=PKT;
     } else {
       st.bad++; if(curWindow) curWindow.bad++;
@@ -492,8 +517,8 @@ function updateStatus(){
   if(t0Times.length>0) setStatus("s-ok","Датчик принял сигнал, идёт изображение","Пакеты типа 0 приходят. Всё работает.");
   else if(st.pk>0) setStatus("s-wait","Датчик отвечает, но изображения пока нет","Приходят пакеты AA 55, но не типа 0. Возможно, датчик ещё запускается или заморожен.");
   else if(sec<5) setStatus("s-wait","Подключено, ждём ответ датчика…",`Сигнал отправлен ${hbCount} раз. Прошло ${sec} с.`);
-  else setStatus("s-bad","Датчик молчит: сигнал, скорее всего, не принят",
-    "Пакетов AA 55 нет. Что попробовать: во вкладке «Стресс-тест» перебрать варианты байта 15 и заголовка, переподключить USB-кабель, закрыть приложение производителя.");
+  else setStatus("s-bad","Датчик молчит, хотя сигнал подтверждён",
+    "Пакетов AA 55 нет. Сигнал по умолчанию — проверенные байты из официального приложения, так что дело, скорее всего, не в них. Проверьте: закрыто ли приложение производителя, тот ли выбран USB-интерфейс/кабель, стоит ли драйвер WinUSB (Zadig). Если и это не помогает — во вкладке «Стресс-тест» можно на всякий случай перебрать соседние варианты байта 15 и заголовка.");
 }
 function paint(){
   if(anRunning) $("anElapsed").textContent="прошло "+fmtDur(Date.now()-anStart);
@@ -502,6 +527,11 @@ function paint(){
   const c=$("cv").getContext("2d"), im=c.createImageData(1024,64);
   for(let k=0;k<vis.length;k++){ const v=vis[k]; im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v; im.data[k*4+3]=255; }
   c.putImageData(im,0,0);
+  if(frameDirty){
+    const fc=$("frame").getContext("2d"), fim=fc.createImageData(frameW,frameH);
+    for(let k=0;k<frameBuf.length;k++){ const v=frameBuf[k]; fim.data[k*4]=fim.data[k*4+1]=fim.data[k*4+2]=v; fim.data[k*4+3]=255; }
+    fc.putImageData(fim,0,0); frameDirty=false;
+  }
   $("hex").textContent=Object.keys(lastByType).map(t=>`тип ${t}:\n${hex(lastByType[t],64)}`).join("\n\n")||"—";
   updateStatus();
   if(recChunks && Date.now()>=recUntil) finishRec();
@@ -538,6 +568,8 @@ $("disc").onclick=async()=>{
 navigator.usb&&navigator.usb.addEventListener("disconnect",e=>{ if(e.device===dev){ stopped(); log("Датчик отключён","err"); }});
 
 $("rec").onclick=()=>{ recChunks=[]; recUntil=Date.now()+5000; log("Запись 5 секунд…","warn"); };
+$("frameReset").onclick=()=>{ resetFrame(); log("Кадр сброшен"); };
+$("frameH").onchange=()=>{ resetFrame(); };
 function finishRec(){
   const parts=recChunks; recChunks=null;
   const blob=new Blob(parts,{type:"application/octet-stream"});
