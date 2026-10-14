@@ -1,657 +1,198 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chison USG Web — always-valid</title>
+<title>Поиск USB-устройства</title>
 <style>
-:root{
-  --bg:#f2f4f6; --panel:#ffffff; --line:#d5dbe1; --text:#14191e; --muted:#5d6b78;
-  --accent:#0b7f94; --accent-ink:#ffffff; --danger:#b42318; --screen:#000; --ok:#1a7f37; --warn:#9a6700;
-  color-scheme:light;
-}
-@media (prefers-color-scheme:dark){
-  :root:not([data-theme="light"]){
-    --bg:#0d1115; --panel:#151b21; --line:#27313b; --text:#e6ebf0; --muted:#8794a1;
-    --accent:#4cc2d6; --accent-ink:#04171b; --danger:#ff8a7a; --ok:#5fd38d; --warn:#e3b341; color-scheme:dark;
+  :root {
+    --bg: #f5f6f7; --panel: #ffffff; --text: #1d2125; --muted: #5d6670;
+    --line: #d5dade; --accent: #0b6e8a; --ok: #1a7f4b; --warn: #a86400; --err: #b3261e;
   }
-}
-:root{ box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
-*,*::before,*::after{ box-sizing:inherit }
-body{ margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-.app{ max-width:1200px; margin:0 auto; padding:16px; display:grid; gap:16px; grid-template-columns:minmax(0,1fr) 300px; align-items:start }
-@media (max-width:820px){ .app{ grid-template-columns:minmax(0,1fr) } }
-header{ grid-column:1/-1; display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap }
-h1{ font-size:1.15rem; margin:0; font-weight:650 }
-.sub{ color:var(--muted); font-size:.85rem }
-.lic{ display:inline-flex; align-items:center; gap:6px; font-size:.8rem; font-weight:600;
-      padding:4px 10px; border-radius:999px; background:var(--panel); border:1px solid var(--line); }
-.lic::before{ content:""; width:9px; height:9px; border-radius:50%; background:var(--muted); flex:none }
-.lic.ok{ color:var(--ok); border-color:var(--ok) } .lic.ok::before{ background:var(--ok) }
-.lic.err{ color:var(--danger); border-color:var(--danger) } .lic.err::before{ background:var(--danger) }
-.stage{ background:var(--screen); border:1px solid var(--line); border-radius:6px; position:relative; aspect-ratio:4/3; display:grid; place-items:center; overflow:hidden }
-canvas{ max-width:100%; max-height:100%; display:block }
-.empty{ position:absolute; inset:0; display:grid; place-items:center; padding:24px; text-align:center; color:#9aa7b3; font-size:.95rem }
-.hud{ position:absolute; left:10px; top:8px; font:12px/1.3 ui-monospace,Menlo,Consolas,monospace; color:#7ee0f0; text-shadow:0 0 3px #000 }
-.rec{ position:absolute; right:12px; top:8px; display:none; align-items:center; gap:6px; color:#ff6b5c; font:600 12px system-ui }
-.rec::before{ content:""; width:9px; height:9px; border-radius:50%; background:#ff6b5c }
-.rec.on{ display:flex }
-.panel{ background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px; display:grid; gap:14px }
-fieldset{ border:0; padding:0; margin:0; display:grid; gap:8px }
-legend{ font-weight:600; font-size:.9rem; padding:0; margin-bottom:6px }
-label{ display:grid; gap:4px; font-size:.85rem; color:var(--muted) }
-label.row{ grid-template-columns:1fr auto; align-items:center }
-select,button{ font:inherit }
-select{ width:100%; padding:8px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--text) }
-input[type=range]{ width:100%; accent-color:var(--accent) }
-.btns{ display:grid; grid-template-columns:1fr 1fr; gap:8px }
-button{ padding:9px 10px; border:1px solid var(--line); border-radius:4px; background:var(--bg); color:var(--text); cursor:pointer }
-button:hover:not(:disabled){ border-color:var(--accent) }
-button:disabled{ opacity:.45; cursor:not-allowed }
-button.primary{ background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600 }
-button.danger{ color:var(--danger); border-color:var(--danger) }
-button.wide{ grid-column:1/-1 }
-:focus-visible{ outline:2px solid var(--accent); outline-offset:2px }
-#status{ min-height:2.6em; font-size:.85rem; color:var(--muted) }
-#status.err{ color:var(--danger) }
-.note{ font-size:.78rem; color:var(--muted); grid-column:1/-1 }
-.state{ display:flex; align-items:center; gap:8px; font-size:.85rem; font-weight:600 }
-.state::before{ content:""; width:10px; height:10px; border-radius:50%; background:var(--muted); flex:none }
-.state.ok::before{ background:var(--ok) } .state.warn::before{ background:var(--warn) } .state.err::before{ background:var(--danger) }
-.licbox{ background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px 12px; display:grid; gap:6px }
-.licrow{ display:flex; justify-content:space-between; gap:10px; font-size:.82rem }
-.licrow b{ color:var(--muted); font-weight:500 }
-.licrow span{ font-family:ui-monospace,Menlo,Consolas,monospace; color:var(--text); overflow-wrap:anywhere; text-align:right }
-.logbox{ margin-top:12px; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px; display:grid; gap:8px }
-.loghead{ display:flex; flex-wrap:wrap; align-items:center; gap:8px }
-.loghead strong{ margin-right:auto; font-size:.9rem }
-.loghead button{ padding:4px 8px; font-size:.8rem }
-.loghead label.inl{ display:flex; align-items:center; gap:4px; font-size:.8rem }
-.log{ height:300px; overflow:auto; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:6px 8px; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace }
-.log .l{ white-space:pre-wrap; overflow-wrap:anywhere }
-.log .t{ color:var(--muted); margin-right:8px }
-.l-ok{ color:var(--ok) } .l-warn{ color:var(--warn) } .l-err{ color:var(--danger) } .l-dbg{ color:var(--muted) }
-.log.quiet .l-dbg{ display:none }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14181b; --panel: #1c2226; --text: #e6e9ec; --muted: #9aa5ae;
+      --line: #313a40; --accent: #5cc3df; --ok: #5fd08e; --warn: #f0b24d; --err: #ff8a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: var(--muted); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #0b1a20; } }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  input[type=text] { font: inherit; width: 90px; padding: 6px 8px; border-radius: 6px;
+                     border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  #status { font-weight: 600; margin: 0 0 8px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; word-break: break-word; }
+  pre { margin: 0; max-height: 360px; overflow: auto; font: 13px/1.45 ui-monospace, Consolas, monospace;
+        white-space: pre-wrap; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
 </style>
 </head>
 <body>
-<main class="app">
-  <header>
-    <div>
-      <h1>Chison USG Web</h1>
-      <span class="sub">USB-датчик в браузере · always-valid лицензия</span>
+<main>
+  <h1>Поиск USB-устройства</h1>
+  <p class="sub">Показывает, видит ли браузер датчик, и что он о себе сообщает. Картинку страница не выводит.</p>
+
+  <div class="panel">
+    <p id="status">Проверяю браузер…</p>
+    <div class="row">
+      <button class="primary" id="btnFind">Найти устройство</button>
+      <button id="btnAll">Показать все USB</button>
+      <label>VID <input type="text" id="vid" value="04B4" maxlength="4"></label>
+      <label>PID <input type="text" id="pid" value="00F1" maxlength="4"></label>
     </div>
-    <div id="lic" class="lic">Лицензия: проверяется…</div>
-  </header>
+  </div>
 
-  <section>
-    <div class="stage" id="stage">
-      <canvas id="view" width="640" height="480" aria-label="Изображение с датчика"></canvas>
-      <div class="empty" id="empty">Подключите датчик по USB и нажмите «Подключить».</div>
-      <div class="hud" id="hud"></div>
-      <div class="rec" id="rec">REC</div>
+  <div class="panel" id="infoPanel" hidden>
+    <h2>Устройство</h2>
+    <dl id="info"></dl>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="justify-content:space-between; margin-bottom:8px">
+      <h2 style="margin:0">Журнал</h2>
+      <span class="row">
+        <button id="btnCopy">Копировать</button>
+        <button id="btnClear">Очистить</button>
+      </span>
     </div>
-
-    <div class="licbox" aria-label="Состояние лицензии">
-      <div class="licrow"><b>Результат</b><span id="licResult">—</span></div>
-      <div class="licrow"><b>Устройство</b><span id="licDevice">—</span></div>
-      <div class="licrow"><b>Режим / tenancy</b><span id="licMode">—</span></div>
-      <div class="licrow"><b>Проверено</b><span id="licTime">—</span></div>
-    </div>
-
-    <div class="logbox">
-      <div class="loghead">
-        <strong>Журнал событий</strong>
-        <label class="inl"><input type="checkbox" id="verbose"> Подробно</label>
-        <button id="logcopy">Копировать</button>
-        <button id="logsave">Скачать .txt</button>
-        <button id="logclear">Очистить</button>
-      </div>
-      <div id="log" class="log quiet" role="log" tabindex="0" aria-label="Журнал событий"></div>
-    </div>
-  </section>
-
-  <aside class="panel">
-    <fieldset>
-      <legend>Источник</legend>
-      <label>Камера
-        <select id="device"><option value="">Системная по умолчанию</option></select>
-      </label>
-      <div class="btns">
-        <button id="connect" class="primary">Подключить</button>
-        <button id="disconnect" disabled>Отключить</button>
-        <button id="rescan" class="wide">Обновить список камер</button>
-      </div>
-      <div id="state" class="state">Не подключено</div>
-      <div id="status" role="status" aria-live="polite">Не подключено.</div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Изображение</legend>
-      <label>Яркость <input id="bright" type="range" min="50" max="200" value="100"></label>
-      <label>Контраст <input id="contrast" type="range" min="50" max="250" value="100"></label>
-      <label class="row">Чёрно-белое <input id="gray" type="checkbox" checked></label>
-      <label class="row">Отразить по горизонтали <input id="flipx" type="checkbox"></label>
-      <label class="row">Отразить по вертикали <input id="flipy" type="checkbox"></label>
-      <label>Поворот
-        <select id="rot"><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select>
-      </label>
-      <button id="reset">Сбросить настройки</button>
-    </fieldset>
-
-    <fieldset>
-      <legend>Сохранение</legend>
-      <div class="btns">
-        <button id="snap" disabled>Сделать снимок</button>
-        <button id="recbtn" disabled>Начать запись</button>
-      </div>
-    </fieldset>
-  </aside>
-
-  <p class="note">Видео обрабатывается только в вашем браузере и никуда не отправляется. Лицензия always-valid: тестовый режим, бессрочно, любое устройство. Приложение не сертифицировано и не предназначено для медицинской диагностики.</p>
+    <pre id="log"></pre>
+  </div>
 </main>
 
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const canvas = $("view"), ctx = canvas.getContext("2d", { willReadFrequently: false });
-  const video = document.createElement("video");
-  video.muted = true; video.playsInline = true;
-  const hasCtxFilter = "filter" in ctx;
-  const probeCv = document.createElement("canvas"); probeCv.width = 32; probeCv.height = 24;
-  const pctx = probeCv.getContext("2d", { willReadFrequently: true });
+  const logEl = $("log"), statusEl = $("status");
+  const hex = (n, w = 4) => n.toString(16).toUpperCase().padStart(w, "0");
+  const CLASSES = { 0x00: "по интерфейсам", 0x01: "аудио", 0x02: "связь", 0x03: "HID", 0x08: "накопитель",
+                    0x0E: "видео (UVC)", 0xEF: "составное", 0xFE: "специальное", 0xFF: "производителя" };
 
-  let stream = null, rafId = 0, recorder = null, chunks = [], gen = 0, connecting = false;
-  let fps = 0, tFps = performance.now(), camFrames = 0, totalFrames = 0, lastFrameAt = 0, connectedAt = 0, lastT = -1;
-  let noFrames = false, frozen = false, pic = "", sameCount = 0, prevSig = null, tickN = 0, hb = 0, lastNoFrameLog = 0, timer = 0;
-
-  /* ================= ЖУРНАЛ ================= */
-  const LOG_MAX = 600, ICON = { info: "ℹ", ok: "✔", warn: "⚠", err: "✖", dbg: "·" };
-  const logLines = [];
-  function log(level, msg) {
-    const d = new Date(), p = (n, l = 2) => String(n).padStart(l, "0");
-    const time = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
-    logLines.push(`[${time}] ${ICON[level]} ${msg}`);
-    if (logLines.length > 3000) logLines.shift();
-    (level === "err" ? console.error : level === "warn" ? console.warn : console.log)(`[USG] ${msg}`);
-    const box = $("log"), stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
-    const row = document.createElement("div"); row.className = `l l-${level}`;
-    const ts = document.createElement("span"); ts.className = "t"; ts.textContent = time;
-    const tx = document.createElement("span"); tx.textContent = `${ICON[level]} ${msg}`;
-    row.append(ts, tx); box.appendChild(row);
-    while (box.childElementCount > LOG_MAX) box.firstChild.remove();
-    if (stick) box.scrollTop = box.scrollHeight;
+  function log(msg, cls) {
+    const t = new Date().toLocaleTimeString("ru-RU");
+    const line = `[${t}] ${msg}\n`;
+    logEl.appendChild(Object.assign(document.createElement("span"), { textContent: line, className: cls || "" }));
+    logEl.scrollTop = logEl.scrollHeight;
+    console.log("[USB]", msg);
   }
-  const fullLog = () => `Chison USG Web — журнал\nСтраница: ${location.href}\nБраузер: ${navigator.userAgent}\nСохранён: ${new Date().toLocaleString("ru-RU")}\n\n${logLines.join("\n")}\n`;
+  function setStatus(text, cls) { statusEl.textContent = text; statusEl.className = cls || ""; }
 
-  /* ================= ЛИЦЕНЗИЯ always-valid ================= */
-  const LIC_STORAGE = "chison_always_valid_v1";
+  if (!("usb" in navigator)) {
+    setStatus("WebUSB не поддерживается. Откройте страницу в Chrome или Edge по HTTPS.", "err");
+    log("navigator.usb отсутствует. Нужен Chrome/Edge на компьютере; Firefox и Safari не подходят.", "err");
+    $("btnFind").disabled = true; $("btnAll").disabled = true;
+    return;
+  }
+  if (!window.isSecureContext) log("Страница не в защищённом контексте: WebUSB не заработает.", "err");
+  setStatus("Готово. Подключите датчик и нажмите «Найти устройство».");
+  log("WebUSB доступен.", "ok");
 
-  function alwaysValidLicense(deviceLabel, deviceId) {
-    const now = new Date();
-    const ts = Math.floor(now.getTime() / 1000);
-    return {
-      result: "FREETEST_KEY_OK",
-      ok: true,
-      device: deviceLabel || deviceId || "ANY",
-      deviceId: deviceId || "ANY",
-      mode: "always-valid",
-      tenancy: -1,
-      keyMonth: now.getFullYear() * 100 + (now.getMonth() + 1),
-      checkedAt: now.toLocaleString("ru-RU"),
-      timeStamp: String(ts),
-      _bypass: true,
-      _note: "Тестовый режим: любое устройство, бессрочно, без ограничений."
-    };
+  function filters() {
+    const v = parseInt($("vid").value, 16), p = parseInt($("pid").value, 16);
+    const f = {};
+    if (!Number.isNaN(v)) f.vendorId = v;
+    if (!Number.isNaN(p) && !Number.isNaN(v)) f.productId = p;
+    return Object.keys(f).length ? [f] : [];
   }
 
-  function updateLicenseUI(r) {
-    const b = $("lic");
-    b.className = `lic ${r.ok ? "ok" : "err"}`;
-    b.textContent = `Лицензия: ${r.ok ? "OK · бессрочно" : "ОШИБКА"}`;
-    $("licResult").textContent = r.result;
-    $("licDevice").textContent = r.device;
-    $("licMode").textContent = `${r.mode} · tenancy = ${r.tenancy}`;
-    $("licTime").textContent = r.checkedAt;
-  }
-
-  function validateLicense(deviceLabel, deviceId, why) {
-    log("info", `──── Проверка лицензии (${why || "auto"}) ────`);
-    const r = alwaysValidLicense(deviceLabel, deviceId);
-    updateLicenseUI(r);
-    log("ok", `Лицензия: ${r.result}`);
-    log("ok", `Устройство: ${r.device}`);
-    log("ok", `Режим: ${r.mode}, tenancy: ${r.tenancy} (бессрочно)`);
-    log("dbg", `KeyMonth: ${r.keyMonth}, timeStamp: ${r.timeStamp}`);
-    log("ok", "Лицензия валидна на любом тестовом устройстве — ограничений нет.");
-    try { localStorage.setItem(LIC_STORAGE, JSON.stringify(r)); } catch {}
-    return r;
-  }
-
-  const startupLic = validateLicense(null, null, "startup");
-
-  /* ================= СОСТОЯНИЕ ================= */
-  const STATES = {
-    idle: ["Не подключено", ""], nocam: ["Камеры не найдены системой", "err"], open: ["Запрашиваем камеру у браузера…", "warn"],
-    ask: ["Ждём разрешения в окне браузера", "warn"], wait: ["Камера открыта, ждём первый кадр…", "warn"],
-    live: ["Видео идёт нормально", "ok"], noframes: ["Камера открыта, но кадры не приходят", "err"],
-    frozen: ["Кадры остановились (картинка зависла)", "err"], black: ["Кадры идут, но картинка чёрная", "warn"],
-    flat: ["Кадры идут, но картинка однотонная", "warn"], error: ["Ошибка подключения", "err"], lost: ["Датчик отключился", "err"]
-  };
-  let curState = "idle";
-  function setState(k) {
-    if (k === curState) return;
-    curState = k;
-    const [t, l] = STATES[k];
-    $("state").textContent = t; $("state").className = `state ${l}`;
-    log(l === "err" ? "err" : l === "warn" ? "warn" : l === "ok" ? "ok" : "info", `СТАТУС → ${t}`);
-  }
-
-  const setStatus = (msg, err = false) => { $("status").textContent = msg; $("status").classList.toggle("err", err); };
-  const stamp = () => new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const download = (blob, name) => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  };
-
-  /* ================= ОКРУЖЕНИЕ ================= */
-  function envReport() {
-    log("info", `Страница: ${location.protocol}//${location.host || "(локальный файл)"}, защищённый контекст: ${isSecureContext ? "да" : "НЕТ"}`);
-    if (!isSecureContext) log("err", "Страница не в защищённом контексте — браузер не даст доступ к камере. Нужен HTTPS или localhost.");
-    if (location.protocol === "file:") log("warn", "Открыт локальный файл (file://). Камера так работает не везде.");
-    if (window.top !== window.self) log("warn", "Страница во фрейме: камера работает только с allow=\"camera\".");
-    log("info", `Браузер: ${navigator.userAgent}`);
-    log(navigator.mediaDevices?.getUserMedia ? "ok" : "err", navigator.mediaDevices?.getUserMedia ? "API камеры (getUserMedia) доступен." : "API камеры НЕдоступен.");
-    log(window.MediaRecorder ? "dbg" : "warn", `Запись видео (MediaRecorder): ${window.MediaRecorder ? "поддерживается" : "НЕ поддерживается"}`);
-    log("dbg", `Фильтры canvas: ${hasCtxFilter ? "встроенные" : "ручные (Safari)"}`);
-    log("ok", "Лицензия: always-valid — тестовый режим, ограничений нет.");
-  }
-
-  async function watchPermission() {
-    if (!navigator.permissions?.query) { log("dbg", "Permissions API нет."); return; }
-    try {
-      const p = await navigator.permissions.query({ name: "camera" });
-      const say = () => {
-        if (p.state === "granted") log("ok", "Разрешение на камеру: выдано.");
-        else if (p.state === "denied") log("err", "Разрешение на камеру: ЗАБЛОКИРОВАНО. Замок → Камера → Разрешить.");
-        else log("info", "Разрешение на камеру: ещё не запрашивалось.");
-      };
-      say();
-      p.onchange = () => { log("info", "Разрешение на камеру изменилось."); say(); };
-    } catch (e) { log("dbg", `Состояние разрешения проверить не удалось (${e.name}).`); }
-  }
-
-  /* ================= СПИСОК КАМЕР ================= */
-  const BUILTIN_RE = /facetime|integrated|built-?in|internal|встроен|virtual|виртуальн|obs|droidcam|snap camera|ir camera/i;
-  const PROBE_RE = /chison|ultra|usg|probe|датчик|uvc|usb.*(video|camera|cam)|capture|grabber/i;
-  const kindOf = l => !l ? "?" : BUILTIN_RE.test(l) ? "builtin" : PROBE_RE.test(l) ? "probe" : "other";
-  const KIND_TXT = { "?": "название скрыто", builtin: "встроенная/виртуальная камера", probe: "похоже на датчик", other: "неизвестное устройство" };
-  let prevMap = null, prevHadLabels = false;
-
-  async function refreshDevices(why) {
-    if (!navigator.mediaDevices?.enumerateDevices) { log("err", "enumerateDevices недоступен."); return []; }
-    let list;
-    try { list = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput"); }
-    catch (e) { log("err", `Список камер: ${e.name}: ${e.message}`); return []; }
-    const sel = $("device"), keep = sel.value;
-    sel.length = 1;
-    list.forEach((d, i) => sel.add(new Option(d.label || `Камера ${i + 1}`, d.deviceId)));
-    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
-
-    const hasLabels = list.some(d => d.label);
-    log("info", `Список камер (${why}): найдено ${list.length}`);
-    list.forEach((d, i) => log("info", `   ${i + 1}. ${d.label || "(название скрыто)"} — ${KIND_TXT[kindOf(d.label)]}`));
-    if (!list.length) {
-      log("err", "Система не показывает ни одной камеры. Проверьте кабель, порт, питание датчика.");
-    } else if (!hasLabels) {
-      log("warn", "Браузер скрывает названия, пока не выдано разрешение. Нажмите «Подключить».");
-    } else {
-      const kinds = list.map(d => kindOf(d.label));
-      if (kinds.includes("probe")) log("ok", "В списке есть устройство, похожее на датчик.");
-      else if (kinds.every(k => k === "builtin")) log("warn", "Видна только встроенная камера, датчика нет.");
+  function showInfo(dev) {
+    const rows = [
+      ["Название", dev.productName || "(не сообщает)"],
+      ["Производитель", dev.manufacturerName || "(не сообщает)"],
+      ["Серийный номер", dev.serialNumber || "(не сообщает)"],
+      ["VID:PID", `${hex(dev.vendorId)}:${hex(dev.productId)}`],
+      ["Версия USB", `${dev.usbVersionMajor}.${dev.usbVersionMinor}`],
+      ["Класс устройства", `0x${hex(dev.deviceClass, 2)} (${CLASSES[dev.deviceClass] || "?"})`],
+      ["Состояние", dev.opened ? "открыто" : "закрыто"],
+    ];
+    const dl = $("info"); dl.textContent = "";
+    for (const [k, v] of rows) {
+      dl.appendChild(Object.assign(document.createElement("dt"), { textContent: k }));
+      dl.appendChild(Object.assign(document.createElement("dd"), { textContent: v }));
     }
-    const map = new Map(list.map((d, i) => [d.deviceId || `#${i}`, d.label]));
-    if (prevMap && prevHadLabels && hasLabels) {
-      map.forEach((l, id) => { if (!prevMap.has(id)) log("ok", `В системе появилось устройство: ${l}`); });
-      prevMap.forEach((l, id) => { if (!map.has(id)) log("warn", `Устройство пропало: ${l}`); });
-    }
-    prevMap = map; prevHadLabels = hasLabels;
-    if (!list.length && !stream) setState("nocam");
-    else if (list.length && curState === "nocam") setState("idle");
-    return list;
+    $("infoPanel").hidden = false;
   }
 
-  /* ================= ПОДКЛЮЧЕНИЕ ================= */
-  function explain(e) {
-    switch (e.name) {
-      case "NotAllowedError": return "Доступ к камере запрещён. Разрешите в настройках сайта.";
-      case "NotFoundError": return "Камера не найдена. Проверьте USB.";
-      case "NotReadableError": return "Камера занята другой программой.";
-      case "OverconstrainedError": return "Выбранная камера недоступна.";
-      default: return `Не удалось подключиться: ${e.message || e.name}`;
-    }
-  }
-
-  async function gumFailed(e, ms) {
-    log("err", `Браузер отклонил запрос камеры через ${Math.round(ms)} мс: ${e.name}${e.message ? " — " + e.message : ""}`);
-    let hint;
-    switch (e.name) {
-      case "NotAllowedError": hint = ms < 150 ? "Отказ мгновенно — вероятно, камера заблокирована." : "Похоже, нажали «Блокировать»."; break;
-      case "NotFoundError": hint = "Датчик не подключён или не определился."; break;
-      case "NotReadableError": hint = "Устройство занято (родная программа, Zoom/Teams, другая вкладка)."; break;
-      case "OverconstrainedError": hint = `Условие «${e.constraint || "?"}» не выполнить.`; break;
-      case "SecurityError": hint = "Нужен HTTPS; во фрейме — allow=\"camera\"."; break;
-      default: hint = "Скопируйте журнал и отправьте разработчику.";
-    }
-    log("warn", `Что проверить: ${hint}`);
-    setStatus(explain(e), true);
-    setState(e.name === "NotFoundError" ? "nocam" : "error");
-    await refreshDevices("после ошибки");
-  }
-
-  function describeTrack(track) {
-    const s = track.getSettings ? track.getSettings() : {};
-    const caps = track.getCapabilities ? track.getCapabilities() : {};
-    log("info", `Открыто устройство: «${track.label || "без названия"}»`);
-    log("info", `Режим: ${s.width || "?"}×${s.height || "?"}, ${s.frameRate ? Math.round(s.frameRate) + " к/с" : "частота неизвестна"}`);
-    if (caps.width && caps.height) log("dbg", `Камера умеет: ширина ${caps.width.min}–${caps.width.max}, высота ${caps.height.min}–${caps.height.max}`);
-    const k = kindOf(track.label);
-    if (k === "builtin") log("warn", "Похоже, открыта встроенная камера, а не датчик.");
-    else if (k === "probe") log("ok", "Название устройства похоже на УЗИ-датчик.");
-    else if (k === "other") log("info", "Название не говорит, что это датчик — убедитесь по картинке.");
-    if (track.muted) log("warn", "Дорожка «приостановлена»: ОС не отдаёт кадры.");
-  }
-
-  async function connect() {
-    if (connecting) { log("warn", "Подключение уже идёт — подождите."); return; }
-    log("info", "──── Нажато «Подключить» ────");
-    if (!navigator.mediaDevices?.getUserMedia) {
-      log("err", `Доступа к камере нет: ${!isSecureContext ? "не HTTPS" : "браузер не поддерживает"}.`);
-      setStatus("Нет доступа к камере.", true); setState("error"); return;
-    }
-    connecting = true;
-    try {
-      disconnect(true);
-      const id = $("device").value, optLabel = $("device").selectedOptions[0]?.textContent;
-      if (id) log("info", `Запрашиваю камеру: «${optLabel}»`);
-      else log("warn", "Выбрано «Системная по умолчанию».");
-
-      validateLicense(optLabel, id, "перед подключением");
-
-      const vc = { width: { ideal: 1280 }, height: { ideal: 720 } };
-      if (id) vc.deviceId = { exact: id };
-      setState("open");
-      const t = performance.now();
-      const askT = setTimeout(() => { if (!stream) { setState("ask"); log("warn", "Ответа нет 1,5 с — браузер показывает окно разрешения."); } }, 1500);
-      let s;
-      try { s = await navigator.mediaDevices.getUserMedia({ video: vc, audio: false }); }
-      catch (e) { clearTimeout(askT); await gumFailed(e, performance.now() - t); return; }
-      clearTimeout(askT);
-      stream = s;
-      const myGen = ++gen;
-      log("ok", `Браузер выдал видеопоток за ${Math.round(performance.now() - t)} мс.`);
-      const track = stream.getVideoTracks()[0];
-      if (!track) { log("err", "В потоке нет видеодорожки."); disconnect(true); setState("error"); return; }
-      describeTrack(track);
-
-      validateLicense(track.label, track.getSettings?.().deviceId, "устройство подключено");
-
-      track.addEventListener("ended", () => {
-        if (myGen !== gen) return;
-        log("err", "Датчик отключился.");
-        setStatus("Датчик отключён.", true); disconnect(true); setState("lost");
-        setTimeout(() => refreshDevices("после отключения"), 600);
-      });
-      track.addEventListener("mute", () => { if (myGen === gen) log("warn", "Поток приостановлен (mute)."); });
-      track.addEventListener("unmute", () => { if (myGen === gen) log("ok", "Поток возобновлён (unmute)."); });
-
-      connectedAt = performance.now(); tFps = connectedAt;
-      totalFrames = 0; camFrames = 0; lastFrameAt = 0; lastT = -1; noFrames = frozen = false; pic = ""; sameCount = 0; prevSig = null; tickN = 0; hb = 0; lastNoFrameLog = 0; fps = 0;
-      video.srcObject = stream;
-      try { await video.play(); }
-      catch (e) { log("err", `video.play(): ${e.name}: ${e.message}`); setStatus(explain(e), true); disconnect(true); setState("error"); return; }
-      log("dbg", "video.play() выполнен, ждём кадры.");
-      if (myGen !== gen) return;
-      await refreshDevices("после выдачи разрешения");
-      if (myGen !== gen) return;
-      const cur = track.getSettings().deviceId; if (cur) $("device").value = cur;
-
-      $("empty").style.display = "none";
-      $("connect").disabled = true; $("disconnect").disabled = false;
-      $("snap").disabled = false; $("recbtn").disabled = false;
-      setStatus(`Подключено: ${track.label || "камера"}`);
-      setState("wait");
-      armFrames(myGen);
-      clearInterval(timer); timer = setInterval(tick, 1000);
-      schedule();
-    } finally { connecting = false; }
-  }
-
-  function disconnect(silent) {
-    gen++;
-    clearInterval(timer); timer = 0;
-    if (recorder) stopRecording();
-    cancelAnimationFrame(rafId); rafId = 0;
-    const had = !!stream;
-    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    video.srcObject = null;
-    $("empty").style.display = "";
-    $("connect").disabled = false; $("disconnect").disabled = true;
-    $("snap").disabled = true; $("recbtn").disabled = true;
-    $("hud").textContent = "";
-    if (!silent) { setStatus("Отключено."); log("info", "Вы отключили датчик."); setState("idle"); }
-    else if (had) log("dbg", "Видеопоток остановлен.");
-  }
-
-  /* ================= КОНТРОЛЬ КАДРОВ ================= */
-  function onCamFrame() {
-    camFrames++; totalFrames++; lastFrameAt = performance.now();
-    if (totalFrames === 1) log("ok", `Первый кадр получен через ${Math.round(lastFrameAt - connectedAt)} мс — программа видит картинку.`);
-  }
-  function armFrames(g) {
-    if (!video.requestVideoFrameCallback) return;
-    const cb = () => { if (g !== gen || !stream) return; onCamFrame(); video.requestVideoFrameCallback(cb); };
-    video.requestVideoFrameCallback(cb);
-  }
-
-  function analyze() {
-    try {
-      pctx.drawImage(video, 0, 0, 32, 24);
-      const d = pctx.getImageData(0, 0, 32, 24).data, n = d.length / 4, lum = new Float32Array(n);
-      let sum = 0;
-      for (let i = 0; i < n; i++) { lum[i] = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2]; sum += lum[i]; }
-      const mean = sum / n; let vr = 0, diff = -1;
-      for (let i = 0; i < n; i++) vr += (lum[i] - mean) ** 2;
-      if (prevSig) { diff = 0; for (let i = 0; i < n; i++) diff += Math.abs(lum[i] - prevSig[i]); }
-      prevSig = lum;
-      return { mean, dev: Math.sqrt(vr / n), diff };
-    } catch (e) { return null; }
-  }
-
-  function tick() {
-    if (!stream) return;
-    const now = performance.now(), dt = (now - tFps) / 1000;
-    fps = camFrames / dt; camFrames = 0; tFps = now;
-    if (document.hidden) return;
-    const up = (now - connectedAt) / 1000;
-    if (++hb % 10 === 0) log("dbg", `Пульс: ${fps.toFixed(1)} к/с, кадров всего ${totalFrames}`);
-
-    if (!totalFrames) {
-      if (up >= 3) {
-        if (!noFrames) { noFrames = true; setState("noframes"); }
-        if (now - lastNoFrameLog >= 10000) {
-          lastNoFrameLog = now;
-          log("err", `Камера открыта ${Math.round(up)} с, но кадров нет. Причины: питание USB, драйвер, не та камера.`);
+  function describeConfig(dev) {
+    for (const cfg of dev.configurations) {
+      log(`Конфигурация ${cfg.configurationValue}: интерфейсов ${cfg.interfaces.length}`);
+      for (const itf of cfg.interfaces) {
+        for (const alt of itf.alternates) {
+          log(`  интерфейс ${itf.interfaceNumber}, alt ${alt.alternateSetting}: класс 0x${hex(alt.interfaceClass, 2)} (${CLASSES[alt.interfaceClass] || "?"})`);
+          for (const ep of alt.endpoints) {
+            log(`    endpoint ${ep.endpointNumber} ${ep.direction === "in" ? "IN " : "OUT"} ${ep.type}, пакет ${ep.packetSize}`);
+          }
         }
       }
-      return;
-    }
-    if (noFrames) { noFrames = false; log("ok", "Кадры наконец пошли."); }
-    const gap = (now - lastFrameAt) / 1000;
-    if (gap > 2) {
-      if (!frozen) { frozen = true; setState("frozen"); log("err", `Новых кадров нет ${gap.toFixed(1)} с.`); }
-      return;
-    }
-    if (frozen) { frozen = false; log("ok", "Кадры снова идут."); }
-
-    if (!(curState === "wait" || ++tickN % 2 === 0)) return;
-    const p = analyze(); if (!p) return;
-    const kind = (p.mean < 6 && p.dev < 3) ? "black" : p.dev < 2 ? "flat" : "ok";
-    sameCount = p.diff === 0 ? sameCount + 1 : 0;
-    if (sameCount === 5) log("warn", "Картинка не меняется ~10 с: возможно, Freeze.");
-    if (kind === "black" && pic !== "black") { pic = "black"; log("warn", `Кадры идут (${fps.toFixed(0)} к/с), но изображение чёрное.`); setState("black"); }
-    else if (kind === "flat" && pic !== "flat") { pic = "flat"; log("warn", `Картинка однотонная (контраст ${p.dev.toFixed(1)}).`); setState("flat"); }
-    else if (kind === "ok") {
-      if (curState !== "live") log("ok", `${pic ? "Картинка появилась" : "Видео идёт"}: ${video.videoWidth}×${video.videoHeight}, ${fps.toFixed(0)} к/с.`);
-      pic = "ok"; setState("live");
     }
   }
 
-  /* ================= ОТРИСОВКА ================= */
-  function schedule() { rafId = requestAnimationFrame(draw); }
-
-  function draw() {
-    rafId = 0;
-    if (!stream) return;
-    const vw = video.videoWidth, vh = video.videoHeight;
-    if (vw && vh) {
-      if (!video.requestVideoFrameCallback && video.currentTime !== lastT) { lastT = video.currentTime; onCamFrame(); }
-      const rot = +$("rot").value, swap = rot === 90 || rot === 270;
-      const cw = swap ? vh : vw, ch = swap ? vw : vh;
-      if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
-      const b = +$("bright").value, c = +$("contrast").value, g = $("gray").checked;
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cw, ch);
-      ctx.translate(cw / 2, ch / 2);
-      ctx.rotate(rot * Math.PI / 180);
-      ctx.scale($("flipx").checked ? -1 : 1, $("flipy").checked ? -1 : 1);
-      if (hasCtxFilter) ctx.filter = `${g ? "grayscale(1) " : ""}brightness(${b}%) contrast(${c}%)`;
-      ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
-      ctx.restore();
-      if (!hasCtxFilter) manualFilter(cw, ch, g, b / 100, c / 100);
+  async function inspect(dev) {
+    log(`Найдено: ${hex(dev.vendorId)}:${hex(dev.productId)} ${dev.productName || ""}`, "ok");
+    try {
+      await dev.open();
+      if (dev.configuration === null && dev.configurations.length) await dev.selectConfiguration(1);
+      showInfo(dev);
+      describeConfig(dev);
+      setStatus(`Устройство видно: ${dev.productName || hex(dev.vendorId) + ":" + hex(dev.productId)}`, "ok");
+      await dev.close();
+    } catch (e) {
+      showInfo(dev);
+      log(`Не удалось открыть: ${e.name}: ${e.message}`, "err");
+      if (e.name === "SecurityError" || /access denied/i.test(e.message)) {
+        log("Доступ закрыт. Устройству нужен драйвер WinUSB (Zadig → WinUSB → Replace Driver) и закрытая остальная программа, которая его использует.", "warn");
+      }
+      setStatus("Устройство найдено, но открыть его не удалось. Подробности в журнале.", "warn");
     }
-    $("hud").textContent = `${canvas.width}×${canvas.height}  ${fps.toFixed(0)} fps`;
-    schedule();
   }
 
-  function manualFilter(w, h, gray, br, co) {
-    const img = ctx.getImageData(0, 0, w, h), d = img.data;
-    for (let i = 0; i < d.length; i += 4) {
-      let r = d[i], g = d[i+1], b = d[i+2];
-      if (gray) r = g = b = 0.299 * r + 0.587 * g + 0.114 * b;
-      d[i]   = ((r * br - 128) * co) + 128;
-      d[i+1] = ((g * br - 128) * co) + 128;
-      d[i+2] = ((b * br - 128) * co) + 128;
+  async function pick(useFilters) {
+    try {
+      const dev = await navigator.usb.requestDevice({ filters: useFilters ? filters() : [] });
+      await inspect(dev);
+    } catch (e) {
+      if (e.name === "NotFoundError") {
+        setStatus("Устройство не выбрано или не найдено.", "warn");
+        log("Окно выбора закрыто или список пуст. Если список пуст: проверьте кабель, порт USB 3.0 и драйвер WinUSB.", "warn");
+      } else {
+        setStatus("Ошибка: " + e.name, "err");
+        log(`${e.name}: ${e.message}`, "err");
+      }
     }
-    ctx.putImageData(img, 0, 0);
   }
 
-  /* ================= СНИМОК И ЗАПИСЬ ================= */
-  function snapshot() {
-    const name = `usg_${stamp()}.png`;
-    canvas.toBlob(b => {
-      if (!b) { log("err", "Снимок не получился."); return; }
-      download(b, name);
-      log("ok", `Снимок сохранён: ${name} (${(b.size / 1024).toFixed(0)} КБ, ${canvas.width}×${canvas.height}).`);
-    }, "image/png");
-  }
-
-  function startRecording() {
-    if (!window.MediaRecorder) { log("err", "MediaRecorder не поддерживается."); setStatus("Запись не поддерживается.", true); return; }
-    const okTypes = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm", "video/mp4"].filter(t => MediaRecorder.isTypeSupported(t));
-    log("info", `Запись: форматы — ${okTypes.join(", ") || "по умолчанию"}`);
-    let rec;
-    try { rec = new MediaRecorder(canvas.captureStream(30), okTypes[0] ? { mimeType: okTypes[0] } : undefined); }
-    catch (e) { log("err", `Запись: ${e.name}: ${e.message}`); return; }
-    recorder = rec; chunks = [];
-    let bytes = 0, n = 0;
-    rec.ondataavailable = e => { if (e.data.size) { chunks.push(e.data); bytes += e.data.size; n++; } };
-    rec.onerror = e => log("err", `Ошибка записи: ${e.error?.name || "?"}`);
-    const mime = rec.mimeType || "video/webm";
-    rec.onstop = () => {
-      if (chunks.length) {
-        const name = `usg_${stamp()}.${mime.includes("mp4") ? "mp4" : "webm"}`;
-        download(new Blob(chunks, { type: mime }), name);
-        log("ok", `Запись сохранена: ${name} (${(bytes / 1048576).toFixed(2)} МБ).`);
-      } else log("warn", "Запись остановлена, данных нет.");
-      chunks = [];
-    };
-    rec.start(1000);
-    log("ok", `Запись начата (${mime}).`);
-    $("rec").classList.add("on"); $("recbtn").textContent = "Остановить запись"; $("recbtn").classList.add("danger");
-  }
-
-  function stopRecording() {
-    if (recorder && recorder.state !== "inactive") { log("info", "Останавливаю запись…"); recorder.stop(); }
-    recorder = null;
-    $("rec").classList.remove("on"); $("recbtn").textContent = "Начать запись"; $("recbtn").classList.remove("danger");
-  }
-
-  function resetImage() {
-    $("bright").value = 100; $("contrast").value = 100;
-    $("gray").checked = true; $("flipx").checked = false; $("flipy").checked = false; $("rot").value = "0";
-    log("dbg", "Настройки изображения сброшены.");
-  }
-
-  /* ================= СОБЫТИЯ ================= */
-  $("connect").onclick = connect;
-  $("disconnect").onclick = () => disconnect(false);
-  $("snap").onclick = snapshot;
-  $("recbtn").onclick = () => recorder ? stopRecording() : startRecording();
-  $("reset").onclick = resetImage;
-  $("rescan").onclick = () => { log("info", "Ручное обновление списка камер."); refreshDevices("вручную"); };
-  $("device").onchange = () => { log("info", `Выбрана камера: «${$("device").selectedOptions[0]?.textContent}»`); if (stream) connect(); };
-  navigator.mediaDevices?.addEventListener?.("devicechange", () => {
-    log("info", "Система сообщила: список камер/USB изменился.");
-    refreshDevices("devicechange").then(l => { if (!stream && l.some(d => kindOf(d.label) === "probe")) log("ok", "Датчик появился в системе."); });
-  });
-  window.addEventListener("pagehide", () => disconnect(true));
-  window.addEventListener("error", e => log("err", `Ошибка в скрипте: ${e.message} (${(e.filename || "").split("/").pop()}:${e.lineno})`));
-  window.addEventListener("unhandledrejection", e => log("err", `Необработанная ошибка: ${e.reason?.name || ""} ${e.reason?.message || e.reason}`));
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) log("warn", "Вкладка скрыта: браузер может приостановить камеру.");
-    else { lastFrameAt = performance.now(); log("info", "Вкладка снова активна."); }
-  });
-  document.addEventListener("keydown", e => {
-    if (e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
-    if (e.key === "s" && stream) { log("dbg", "Горячая клавиша S — снимок."); snapshot(); }
-    if (e.key === "r" && stream) { log("dbg", "Горячая клавиша R — запись."); $("recbtn").click(); }
-  });
-
-  const LBL = { bright: "Яркость", contrast: "Контраст", gray: "Чёрно-белое", flipx: "Отражение по горизонтали", flipy: "Отражение по вертикали", rot: "Поворот" };
-  Object.keys(LBL).forEach(id => $(id).addEventListener("change", () =>
-    log("dbg", `Настройка «${LBL[id]}»: ${$(id).type === "checkbox" ? ($(id).checked ? "вкл" : "выкл") : $(id).value}`)));
-
-  video.addEventListener("loadedmetadata", () => stream && log("dbg", `Метаданные видео: ${video.videoWidth}×${video.videoHeight}`));
-  video.addEventListener("playing", () => stream && log("dbg", "Видео-элемент начал воспроизведение."));
-  video.addEventListener("waiting", () => stream && log("warn", "Видео ждёт данные от камеры."));
-  video.addEventListener("stalled", () => stream && log("warn", "Загрузка видео застопорилась."));
-  video.addEventListener("resize", () => stream && log("info", `Разрешение потока изменилось: ${video.videoWidth}×${video.videoHeight}`));
-  video.addEventListener("error", () => { const m = video.error; log("err", `Ошибка видео-элемента: код ${m?.code ?? "?"} ${m?.message || ""}`); });
-
-  $("verbose").onchange = () => $("log").classList.toggle("quiet", !$("verbose").checked);
-  $("logclear").onclick = () => { $("log").textContent = ""; logLines.length = 0; log("info", "Журнал очищен."); };
-  $("logsave").onclick = () => { download(new Blob([fullLog()], { type: "text/plain;charset=utf-8" }), `usg_log_${stamp()}.txt`); log("ok", "Журнал сохранён в файл."); };
-  $("logcopy").onclick = async () => {
-    const text = fullLog();
-    try { await navigator.clipboard.writeText(text); log("ok", "Журнал скопирован."); }
-    catch (e) {
-      const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
-      let ok = false; try { ok = document.execCommand("copy"); } catch (_) {}
-      ta.remove();
-      log(ok ? "ok" : "err", ok ? "Журнал скопирован." : "Скопировать не удалось — используйте «Скачать .txt».");
-    }
+  $("btnFind").onclick = () => pick(true);
+  $("btnAll").onclick = () => pick(false);
+  $("btnClear").onclick = () => { logEl.textContent = ""; };
+  $("btnCopy").onclick = async () => {
+    try { await navigator.clipboard.writeText(logEl.textContent); log("Журнал скопирован.", "ok"); }
+    catch { log("Не удалось скопировать.", "err"); }
   };
 
-  /* ================= СТАРТ ================= */
-  log("info", "══ Chison USG Web: запуск ══");
-  log("ok", `Лицензия: ${startupLic.result} · tenancy = ${startupLic.tenancy} (бессрочно) · тестовый режим.`);
-  envReport();
-  watchPermission();
-  refreshDevices("при загрузке страницы");
+  navigator.usb.addEventListener("connect", e => {
+    log(`Подключено: ${hex(e.device.vendorId)}:${hex(e.device.productId)}`, "ok");
+    inspect(e.device);
+  });
+  navigator.usb.addEventListener("disconnect", e => {
+    log(`Отключено: ${hex(e.device.vendorId)}:${hex(e.device.productId)}`, "warn");
+    setStatus("Устройство отключено.", "warn");
+  });
+
+  navigator.usb.getDevices().then(list => {
+    if (list.length) { log(`Ранее разрешённых устройств: ${list.length}`); list.forEach(inspect); }
+  });
 })();
 </script>
 </body>
