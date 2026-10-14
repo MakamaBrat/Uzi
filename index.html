@@ -35,11 +35,32 @@ small{color:var(--muted)}
 details summary{cursor:pointer;font-weight:600}
 details[open] summary{margin-bottom:10px}
 details>div{display:grid;gap:10px}
+.tabnav{display:flex;gap:6px;flex-wrap:wrap}
+.tabnav button{border-radius:6px 6px 0 0;background:var(--panel)}
+.tabnav button.active{background:var(--accent);border-color:var(--accent);color:var(--ink);font-weight:600}
+.tabpanel{display:none;gap:14px}
+.tabpanel.active{display:grid}
+.tblwrap{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:4px}
+table{border-collapse:collapse;width:100%;font-size:.8rem}
+table th,table td{border-bottom:1px solid var(--line);padding:4px 7px;text-align:left;white-space:nowrap}
+table thead th{position:sticky;top:0;background:var(--panel)}
+table tr.best{background:rgba(26,127,55,.15)}
+.legend{display:flex;gap:14px;font-size:.78rem;color:var(--muted)}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
 </style>
 </head>
 <body>
 <main>
 <h1>Chison — WebUSB: подключение и захват сырых данных</h1>
+
+<nav class="tabnav" id="tabnav">
+  <button class="tabbtn active" data-tab="conn">Связь</button>
+  <button class="tabbtn" data-tab="gen">Генератор</button>
+  <button class="tabbtn" data-tab="stress">Стресс-тест</button>
+</nav>
+
+<!-- ==================== ВКЛАДКА: СВЯЗЬ ==================== -->
+<div class="tabpanel active" id="tab-conn">
 
 <section class="panel">
   <strong>Как это работает</strong>
@@ -96,7 +117,7 @@ details>div{display:grid;gap:10px}
       <label style="display:grid">Заголовок пакета, 13 байт (hex)
         <input type="text" class="mono" id="hdr" value="01 55 AA 12 34 56 78 9A FF C2 FF 03 00">
       </label>
-      <small>Блок = начало (14 байт) + вариант (байт 14) + байт 15 + 1008 байт FF. Что именно проверяет датчик, неизвестно, поэтому можно менять значения и смотреть, пойдут ли пакеты. Применяется при следующем подключении.</small>
+      <small>Блок = начало (14 байт) + вариант (байт 14) + байт 15 + 1008 байт FF. Что именно проверяет датчик, неизвестно, поэтому можно менять значения и смотреть, пойдут ли пакеты. Применяется при следующем подключении. Для автоматического перебора используйте вкладки «Генератор» и «Стресс-тест».</small>
       <strong>Последний отправленный пакет (первые 32 байта)</strong>
       <pre id="sent">—</pre>
     </div>
@@ -112,6 +133,85 @@ details>div{display:grid;gap:10px}
   <strong>Журнал</strong>
   <div class="log" id="log" role="log"></div>
 </section>
+
+</div>
+
+<!-- ==================== ВКЛАДКА: ГЕНЕРАТОР ==================== -->
+<div class="tabpanel" id="tab-gen">
+
+<section class="panel">
+  <strong>Генератор одиночного пакета</strong>
+  <small>Собирает один сигнальный блок с выбранными значениями и сразу отправляет его датчику (без ожидания основного таймера). Нужно быть подключённым (вкладка «Связь»). Удобно, чтобы быстро проверить одну гипотезу, не запуская полный перебор.</small>
+  <div class="row">
+    <label>Вариант (байт 14) <select id="gen-mode"><option value="7">07</option><option value="8">08</option></select></label>
+    <label>Байт 15 (hex) <input type="text" class="mono" id="gen-b15" value="0A" style="width:70px"></label>
+    <label><input type="checkbox" id="gen-hdrvary"> менять байт заголовка №</label>
+    <select id="gen-hdridx"></select>
+    <label>значение (hex) <input type="text" class="mono" id="gen-hdrval" value="00" style="width:70px"></label>
+  </div>
+  <div class="row">
+    <button class="primary" id="genSend">Сгенерировать и отправить</button>
+    <button id="genRandom">Случайные значения и отправить</button>
+  </div>
+  <small id="genSentInfo" class="t">—</small>
+  <strong id="genResult">Результат появится здесь после отправки (ждём ~1.5 с ответа).</strong>
+</section>
+
+</div>
+
+<!-- ==================== ВКЛАДКА: СТРЕСС-ТЕСТ ==================== -->
+<div class="tabpanel" id="tab-stress">
+
+<section class="panel">
+  <strong>Перебор параметров сигнала</strong>
+  <small>Перебирает все комбинации выбранных диапазонов, для каждой комбинации отправляет сигнал (повторяя его с периодом ниже, пока идёт «выдержка» для этой комбинации) и считает, сколько пакетов AA 55 пришло в ответ. Нужно быть подключённым (вкладка «Связь»). Максимум 800 комбинаций за один запуск — сузьте диапазоны, если больше.</small>
+  <div class="row">
+    <label><input type="checkbox" id="sw-m7" checked> вариант 07</label>
+    <label><input type="checkbox" id="sw-m8"> вариант 08</label>
+  </div>
+  <div class="row">
+    <label>Байт 15, hex от <input type="text" class="mono" id="sw-b15min" value="00" style="width:60px"></label>
+    <label>до <input type="text" class="mono" id="sw-b15max" value="FF" style="width:60px"></label>
+    <label>шаг <input type="number" id="sw-b15step" value="16" min="1" max="255" style="width:70px"></label>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="sw-hdrvary"> также перебирать байт заголовка №</label>
+    <select id="sw-hdridx"></select>
+    <label>от (hex) <input type="text" class="mono" id="sw-hdrmin" value="00" style="width:60px"></label>
+    <label>до (hex) <input type="text" class="mono" id="sw-hdrmax" value="FF" style="width:60px"></label>
+    <label>шаг <input type="number" id="sw-hdrstep" value="32" min="1" max="255" style="width:70px"></label>
+  </div>
+  <div class="row">
+    <label>Выдержка на комбинацию, мс <input type="number" id="sw-dwell" value="1500" min="200" step="100"></label>
+  </div>
+  <div class="row">
+    <button class="primary" id="swStart">Запустить перебор</button>
+    <button id="swStop" disabled>Остановить</button>
+    <span id="swProgress" class="t">—</span>
+  </div>
+</section>
+
+<section class="panel">
+  <strong>График откликов</strong>
+  <div class="legend">
+    <span><i class="sw" style="background:#2f8fb0"></i>всего пакетов AA 55 за комбинацию</span>
+    <span><i class="sw" style="background:#1a7f37"></i>из них тип 0 (изображение)</span>
+  </div>
+  <canvas id="swChart" width="800" height="160" style="background:var(--panel);border:1px solid var(--line)"></canvas>
+</section>
+
+<section class="panel">
+  <strong>Результаты по комбинациям</strong>
+  <div class="tblwrap">
+    <table id="swTable">
+      <thead><tr><th>#</th><th>mode</th><th>b15</th><th>hdr[№]</th><th>всего</th><th>тип0</th><th>тип1</th><th>тип2</th><th>мусор</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+</div>
+
 </main>
 
 <script>
@@ -122,6 +222,9 @@ let dev=null, run=false, hbTimer=null, recChunks=null, recUntil=0, hbCount=0, co
 const st={bytes:0,pk:0,t:[0,0,0],bad:0};
 const lastByType={}, t0Times=[];
 let carry=new Uint8Array(0), vis=new Uint8Array(1024*64);
+
+// окно измерения для генератора/стресс-теста: если не null, параллельно считаем в него
+let curWindow=null;
 
 function log(msg,cls=""){
   const d=document.createElement("div"); const ts=new Date().toLocaleTimeString("ru-RU");
@@ -148,11 +251,25 @@ function heartbeat(){
   b[HDR+14]=v; b[HDR+15]=cfg.b15; hbCount++;
   return b;
 }
-async function sendHB(){
+async function sendRaw(p){
   try{
-    const p=heartbeat(); $("sent").textContent=hex(p,32);
-    const r=await dev.transferOut(EP,p); if(r.status!=="ok") log("Отправка сигнала: "+r.status,"warn");
-  }catch(e){ log("Ошибка отправки сигнала: "+e.message,"err"); }
+    $("sent").textContent=hex(p,32);
+    const r=await dev.transferOut(EP,p); if(r.status!=="ok") log("Отправка: "+r.status,"warn");
+  }catch(e){ log("Ошибка отправки: "+e.message,"err"); }
+}
+async function sendHB(){ await sendRaw(heartbeat()); }
+
+function pauseHB(){ if(hbTimer){ clearInterval(hbTimer); hbTimer=null; } }
+function resumeHB(){ if(run && !hbTimer){ hbTimer=setInterval(sendHB,hbMs); } }
+
+// собрать блок сигнала с переопределением mode/b15/одного байта заголовка
+function buildBlockFor(combo){
+  const b=new Uint8Array(HDR+PKT).fill(0xFF);
+  const hdr2=cfg.hdr.slice();
+  if(combo.hdrVal!==null && combo.hdrVal!==undefined) hdr2[combo.hdrIdx]=combo.hdrVal;
+  b.set(hdr2,0); b.set(cfg.pre,HDR);
+  b[HDR+14]=combo.mode; b[HDR+15]=combo.b15;
+  return b;
 }
 
 function handle(buf){
@@ -164,11 +281,12 @@ function handle(buf){
     const p=u.subarray(i,i+PKT);
     if(p[0]===0xAA && p[1]===0x55){
       const t=p[2]; st.pk++; st.t[t<=2?t:2]++;
+      if(curWindow){ curWindow.pk++; curWindow.t[t<=2?t:2]++; }
       lastByType[t]=p.slice();
       if(t===0){ t0Times.push(Date.now()); vis.copyWithin(0,PKT); vis.set(p,vis.length-PKT); }
       i+=PKT;
     } else {
-      st.bad++;
+      st.bad++; if(curWindow) curWindow.bad++;
       let j=i+1; while(j+1<u.length && !(u[j]===0xAA&&u[j+1]===0x55)) j++;
       i=(j+1<u.length)?j:u.length-1;
       if(u.length-i<PKT) break;
@@ -200,7 +318,7 @@ function updateStatus(){
   else if(st.pk>0) setStatus("s-wait","Датчик отвечает, но изображения пока нет","Приходят пакеты AA 55, но не типа 0. Возможно, датчик ещё запускается или заморожен.");
   else if(sec<5) setStatus("s-wait","Подключено, ждём ответ датчика…",`Сигнал отправлен ${hbCount} раз. Прошло ${sec} с.`);
   else setStatus("s-bad","Датчик молчит: сигнал, скорее всего, не принят",
-    "Пакетов AA 55 нет. Что попробовать: в «Дополнительно» сменить вариант блока на 08 или «чередовать», переподключить USB-кабель, закрыть приложение производителя.");
+    "Пакетов AA 55 нет. Что попробовать: во вкладке «Стресс-тест» перебрать варианты байта 15 и заголовка, переподключить USB-кабель, закрыть приложение производителя.");
 }
 function paint(){
   $("sBytes").textContent=st.bytes.toLocaleString("ru");
@@ -214,7 +332,7 @@ function paint(){
   setTimeout(paint,250);
 }
 
-function stopped(){ run=false; clearInterval(hbTimer); $("conn").disabled=false; $("disc").disabled=true; $("rec").disabled=true; }
+function stopped(){ run=false; clearInterval(hbTimer); hbTimer=null; $("conn").disabled=false; $("disc").disabled=true; $("rec").disabled=true; }
 
 $("conn").onclick=async()=>{
   if(!navigator.usb){ log("WebUSB недоступен (нужен Chrome/Edge и HTTPS или localhost)","err"); return; }
@@ -250,6 +368,158 @@ function finishRec(){
   const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`chison_dump_${Date.now()}.bin`; a.click();
   log(`Дамп сохранён: ${blob.size} байт`,"ok");
 }
+
+/* ==================== ВКЛАДКИ ==================== */
+document.querySelectorAll(".tabbtn").forEach(btn=>btn.onclick=()=>{
+  document.querySelectorAll(".tabbtn").forEach(b=>b.classList.remove("active"));
+  document.querySelectorAll(".tabpanel").forEach(p=>p.classList.remove("active"));
+  btn.classList.add("active");
+  $("tab-"+btn.dataset.tab).classList.add("active");
+});
+
+// заполнить выпадающие списки «номер байта заголовка» (0..12)
+["gen-hdridx","sw-hdridx"].forEach(id=>{
+  const sel=$(id);
+  for(let i=0;i<HDR;i++){ const o=document.createElement("option"); o.value=i; o.textContent="№"+i; sel.appendChild(o); }
+});
+
+/* ==================== ГЕНЕРАТОР ОДНОГО ПАКЕТА ==================== */
+async function genSendOnce(){
+  if(!run || !dev){ log("Сначала подключите датчик (вкладка «Связь»)","err"); return; }
+  if(sweepRunning){ log("Сначала остановите стресс-тест","err"); return; }
+  try{ readCfg(); }catch(e){ log(e.message,"err"); return; }
+  const combo={
+    mode:+$("gen-mode").value,
+    b15:parseHex($("gen-b15").value,1,"Байт 15")[0],
+    hdrIdx:+$("gen-hdridx").value,
+    hdrVal:$("gen-hdrvary").checked?parseHex($("gen-hdrval").value,1,"Значение байта заголовка")[0]:null
+  };
+  pauseHB();
+  const block=buildBlockFor(combo);
+  curWindow={pk:0,t:[0,0,0],bad:0};
+  await sendRaw(block);
+  $("genSentInfo").textContent=`Отправлено: mode=${combo.mode} b15=0x${combo.b15.toString(16).padStart(2,"0")}`+
+    (combo.hdrVal!==null?` hdr[${combo.hdrIdx}]=0x${combo.hdrVal.toString(16).padStart(2,"0")}`:"");
+  $("genResult").textContent="Ждём ответа…";
+  await new Promise(r=>setTimeout(r,1500));
+  const w=curWindow; curWindow=null;
+  $("genResult").textContent=`Пакетов AA 55: ${w.pk} (тип0: ${w.t[0]}, тип1: ${w.t[1]}, тип2/др.: ${w.t[2]}, мусора: ${w.bad})`;
+  if(w.pk>0) log("Генератор: датчик ответил на этот пакет","ok");
+  resumeHB();
+}
+$("genSend").onclick=genSendOnce;
+$("genRandom").onclick=()=>{
+  $("gen-b15").value=(Math.floor(Math.random()*256)).toString(16).padStart(2,"0");
+  if($("gen-hdrvary").checked) $("gen-hdrval").value=(Math.floor(Math.random()*256)).toString(16).padStart(2,"0");
+  genSendOnce();
+};
+
+/* ==================== СТРЕСС-ТЕСТ / ПЕРЕБОР ==================== */
+let sweepRunning=false, sweepStop=false, sweepResults=[];
+
+function buildCombos(){
+  const modes=[]; if($("sw-m7").checked) modes.push(7); if($("sw-m8").checked) modes.push(8);
+  if(!modes.length) modes.push(7);
+  const b15min=parseHex($("sw-b15min").value,1,"Байт15 от")[0];
+  const b15max=parseHex($("sw-b15max").value,1,"Байт15 до")[0];
+  const b15step=Math.max(1,+$("sw-b15step").value||1);
+  const b15list=[]; for(let v=b15min; v<=b15max; v+=b15step) b15list.push(v&0xFF);
+  if(!b15list.length) b15list.push(b15min&0xFF);
+
+  const varyHdr=$("sw-hdrvary").checked;
+  const hdrIdx=+$("sw-hdridx").value;
+  let hdrlist=[null];
+  if(varyHdr){
+    const hmin=parseHex($("sw-hdrmin").value,1,"hdr от")[0];
+    const hmax=parseHex($("sw-hdrmax").value,1,"hdr до")[0];
+    const hstep=Math.max(1,+$("sw-hdrstep").value||1);
+    hdrlist=[]; for(let v=hmin; v<=hmax; v+=hstep) hdrlist.push(v&0xFF);
+    if(!hdrlist.length) hdrlist.push(hmin&0xFF);
+  }
+  const combos=[];
+  for(const m of modes) for(const b of b15list) for(const h of hdrlist) combos.push({mode:m,b15:b,hdrIdx,hdrVal:h});
+  return combos;
+}
+
+function addSweepRow(r){
+  const tr=document.createElement("tr"); tr.dataset.idx=r.idx;
+  tr.innerHTML=`<td>${r.idx}</td><td>${r.mode}</td><td>0x${r.b15.toString(16).padStart(2,"0")}</td>`+
+    `<td>${r.hdrVal===null?"—":`№${r.hdrIdx}=0x${r.hdrVal.toString(16).padStart(2,"0")}`}</td>`+
+    `<td>${r.pk}</td><td>${r.t0}</td><td>${r.t1}</td><td>${r.t2}</td><td>${r.bad}</td>`;
+  const tbody=$("swTable").querySelector("tbody");
+  tbody.appendChild(tr);
+  $("swTable").parentElement.scrollTop=1e9;
+}
+
+function drawChart(){
+  const c=$("swChart"), ctx=c.getContext("2d");
+  ctx.clearRect(0,0,c.width,c.height);
+  if(!sweepResults.length) return;
+  const maxV=Math.max(1,...sweepResults.map(r=>Math.max(r.pk,r.t0)));
+  const n=sweepResults.length, w=c.width, h=c.height, bw=Math.max(1,w/n);
+  sweepResults.forEach((r,i)=>{
+    const x=i*bw;
+    const hPk=(r.pk/maxV)*(h-4), hT0=(r.t0/maxV)*(h-4);
+    ctx.fillStyle="#2f8fb0"; ctx.fillRect(x,h-hPk,Math.max(1,bw-1),hPk);
+    ctx.fillStyle="#1a7f37"; ctx.fillRect(x,h-hT0,Math.max(1,bw-1),hT0);
+  });
+}
+
+function highlightBest(){
+  if(!sweepResults.length) return;
+  let best=sweepResults[0];
+  for(const r of sweepResults){ if(r.t0>best.t0 || (r.t0===best.t0 && r.pk>best.pk)) best=r; }
+  $("swTable").querySelectorAll("tbody tr").forEach(tr=>{ if(+tr.dataset.idx===best.idx) tr.classList.add("best"); });
+  if(best.pk>0||best.t0>0){
+    log(`Лучшая комбинация #${best.idx}: mode=${best.mode} b15=0x${best.b15.toString(16).padStart(2,"0")}`+
+      (best.hdrVal!==null?` hdr[${best.hdrIdx}]=0x${best.hdrVal.toString(16).padStart(2,"0")}`:"")+
+      ` → всего ${best.pk} пакетов AA55, тип0: ${best.t0}`,"ok");
+  } else {
+    log("Ни одна комбинация в этом переборе не вызвала ответа датчика (пакетов AA 55 нет).","warn");
+  }
+}
+
+async function runSweep(){
+  if(!run || !dev){ log("Сначала подключите датчик (вкладка «Связь»)","err"); return; }
+  let combos;
+  try{ readCfg(); combos=buildCombos(); }catch(e){ log(e.message,"err"); return; }
+  if(combos.length>800){ log(`Слишком много комбинаций (${combos.length}). Сузьте диапазоны или увеличьте шаг — максимум 800 за один запуск.`,"err"); return; }
+  if(!combos.length){ log("Нет ни одной комбинации для перебора — проверьте диапазоны.","err"); return; }
+
+  sweepResults=[]; $("swTable").querySelector("tbody").innerHTML=""; drawChart();
+  sweepRunning=true; sweepStop=false;
+  $("swStart").disabled=true; $("swStop").disabled=false;
+  log(`Стресс-тест: запуск перебора, комбинаций — ${combos.length}`,"warn");
+  pauseHB();
+
+  const dwell=Math.max(200,+$("sw-dwell").value||1500);
+  const innerHb=Math.max(100,+$("hb").value||1000);
+
+  for(let idx=0; idx<combos.length && !sweepStop; idx++){
+    const combo=combos[idx];
+    const block=buildBlockFor(combo);
+    curWindow={pk:0,t:[0,0,0],bad:0};
+    const start=Date.now();
+    await sendRaw(block);
+    let nextSend=start+innerHb;
+    while(Date.now()-start<dwell && !sweepStop){
+      if(Date.now()>=nextSend){ await sendRaw(block); nextSend+=innerHb; }
+      await new Promise(r=>setTimeout(r,50));
+    }
+    const w=curWindow; curWindow=null;
+    const res={idx, mode:combo.mode, b15:combo.b15, hdrIdx:combo.hdrIdx, hdrVal:combo.hdrVal, pk:w.pk, t0:w.t[0], t1:w.t[1], t2:w.t[2], bad:w.bad};
+    sweepResults.push(res); addSweepRow(res); drawChart();
+    $("swProgress").textContent=`${idx+1} / ${combos.length}`;
+  }
+  curWindow=null; sweepRunning=false;
+  $("swStart").disabled=false; $("swStop").disabled=true;
+  log(sweepStop?"Стресс-тест остановлен пользователем":"Стресс-тест завершён","warn");
+  highlightBest();
+  resumeHB();
+}
+$("swStart").onclick=runSweep;
+$("swStop").onclick=()=>{ sweepStop=true; };
+
 log(navigator.usb?"WebUSB доступен.":"WebUSB недоступен","t");
 paint();
 </script>
