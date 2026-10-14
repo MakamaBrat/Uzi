@@ -1,199 +1,185 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Поиск USB-устройства</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chison WebUSB — захват</title>
 <style>
-  :root {
-    --bg: #f5f6f7; --panel: #ffffff; --text: #1d2125; --muted: #5d6670;
-    --line: #d5dade; --accent: #0b6e8a; --ok: #1a7f4b; --warn: #a86400; --err: #b3261e;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #14181b; --panel: #1c2226; --text: #e6e9ec; --muted: #9aa5ae;
-      --line: #313a40; --accent: #5cc3df; --ok: #5fd08e; --warn: #f0b24d; --err: #ff8a80;
-    }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 15px/1.5 system-ui, "Segoe UI", Arial, sans-serif; }
-  main { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  p.sub { margin: 0 0 20px; color: var(--muted); }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
-           background: var(--panel); color: var(--text); cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  @media (prefers-color-scheme: dark) { button.primary { color: #0b1a20; } }
-  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
-  input[type=text] { font: inherit; width: 90px; padding: 6px 8px; border-radius: 6px;
-                     border: 1px solid var(--line); background: var(--bg); color: var(--text); }
-  #status { font-weight: 600; margin: 0 0 8px; }
-  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
-  dt { color: var(--muted); } dd { margin: 0; word-break: break-word; }
-  pre { margin: 0; max-height: 360px; overflow: auto; font: 13px/1.45 ui-monospace, Consolas, monospace;
-        white-space: pre-wrap; }
-  h2 { font-size: 16px; margin: 0 0 10px; }
+:root{--bg:#f2f4f6;--panel:#fff;--line:#d5dbe1;--text:#14191e;--muted:#5d6b78;--accent:#0b7f94;--ink:#fff;--ok:#1a7f37;--err:#b42318;--warn:#9a6700;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0d1115;--panel:#151b21;--line:#27313b;--text:#e6ebf0;--muted:#8794a1;--accent:#4cc2d6;--ink:#04171b;--ok:#5fd38d;--err:#ff8a7a;--warn:#e3b341;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,"Segoe UI",sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:1000px;margin:0 auto;padding:16px;display:grid;gap:14px}
+h1{font-size:1.15rem;margin:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:grid;gap:10px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--ink);font-weight:600}
+button:disabled{opacity:.45;cursor:not-allowed}
+label{font-size:.85rem;color:var(--muted);display:flex;gap:6px;align-items:center}
+input[type=number],select{font:inherit;padding:6px;width:90px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.stat{border:1px solid var(--line);border-radius:4px;padding:8px}
+.stat b{display:block;font-size:1.2rem}.stat span{color:var(--muted);font-size:.8rem}
+pre,.log{margin:0;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px;overflow:auto;max-height:280px;white-space:pre-wrap;overflow-wrap:anywhere}
+.ok{color:var(--ok)}.err{color:var(--err)}.warn{color:var(--warn)}.t{color:var(--muted)}
+canvas{width:100%;height:160px;background:#000;border-radius:4px;image-rendering:pixelated}
+small{color:var(--muted)}
 </style>
 </head>
 <body>
 <main>
-  <h1>Поиск USB-устройства</h1>
-  <p class="sub">Показывает, видит ли браузер датчик, и что он о себе сообщает. Картинку страница не выводит.</p>
+<h1>Chison — WebUSB: подключение и захват сырых данных</h1>
 
-  <div class="panel">
-    <p id="status">Проверяю браузер…</p>
-    <div class="row">
-      <button class="primary" id="btnFind">Найти устройство</button>
-      <button id="btnAll">Показать все USB</button>
-      <label>VID <input type="text" id="vid" value="04B4" maxlength="4"></label>
-      <label>PID <input type="text" id="pid" value="00F1" maxlength="4"></label>
-    </div>
+<section class="panel">
+  <div class="row">
+    <label>Файл data194 <input type="file" id="lic"></label>
+    <label>Часть <select id="half"><option value="0">0–1023 (как в приложении)</option><option value="1024">1024–2047</option></select></label>
+    <label>Heartbeat, мс <input type="number" id="hb" value="1000" min="100" step="100"></label>
   </div>
+  <div class="row">
+    <button class="primary" id="conn">Подключить</button>
+    <button id="disc" disabled>Отключить</button>
+    <button id="rec" disabled>Записать 5 с в файл</button>
+  </div>
+  <small>Файл data194 остаётся в браузере и никуда не отправляется. Не выкладывайте его вместе со страницей на публичный хостинг.</small>
+</section>
 
-  <div class="panel" id="infoPanel" hidden>
-    <h2>Устройство</h2>
-    <dl id="info"></dl>
+<section class="panel">
+  <div class="stats">
+    <div class="stat"><b id="sBytes">0</b><span>байт принято</span></div>
+    <div class="stat"><b id="sPk">0</b><span>пакетов по 1024</span></div>
+    <div class="stat"><b id="sT0">0</b><span>тип 0 (изображение)</span></div>
+    <div class="stat"><b id="sT1">0</b><span>тип 1 (инфо)</span></div>
+    <div class="stat"><b id="sT2">0</b><span>тип 2 / прочие</span></div>
+    <div class="stat"><b id="sBad">0</b><span>без заголовка AA 55</span></div>
   </div>
+  <canvas id="cv" width="1024" height="64" aria-label="Серое представление последних пакетов изображения"></canvas>
+  <small>Холст — грубая визуализация: последние пакеты типа 0, байты как яркость (не готовое изображение).</small>
+</section>
 
-  <div class="panel">
-    <div class="row" style="justify-content:space-between; margin-bottom:8px">
-      <h2 style="margin:0">Журнал</h2>
-      <span class="row">
-        <button id="btnCopy">Копировать</button>
-        <button id="btnClear">Очистить</button>
-      </span>
-    </div>
-    <pre id="log"></pre>
-  </div>
+<section class="panel">
+  <strong>Последние пакеты (первые 64 байта)</strong>
+  <pre id="hex">—</pre>
+</section>
+
+<section class="panel">
+  <strong>Журнал</strong>
+  <div class="log" id="log" role="log"></div>
+</section>
 </main>
 
 <script>
-(() => {
-  const $ = id => document.getElementById(id);
-  const logEl = $("log"), statusEl = $("status");
-  const hex = (n, w = 4) => n.toString(16).toUpperCase().padStart(w, "0");
-  const CLASSES = { 0x00: "по интерфейсам", 0x01: "аудио", 0x02: "связь", 0x03: "HID", 0x08: "накопитель",
-                    0x0E: "видео (UVC)", 0xEF: "составное", 0xFE: "специальное", 0xFF: "производителя" };
+"use strict";
+const $=id=>document.getElementById(id);
+const VID=0x04B4, PID=0x00F1, EP=1, PKT=1024, HDR=13;
+let dev=null, run=false, hbTimer=null, licBytes=null, recChunks=null, recUntil=0;
+const st={bytes:0,pk:0,t:[0,0,0],bad:0};
+const lastByType={};
+let carry=new Uint8Array(0), vis=new Uint8Array(1024*64), visPos=0;
 
-  function log(msg, cls) {
-    const t = new Date().toLocaleTimeString("ru-RU");
-    const line = `[${t}] ${msg}\n`;
-    logEl.appendChild(Object.assign(document.createElement("span"), { textContent: line, className: cls || "" }));
-    logEl.scrollTop = logEl.scrollHeight;
-    console.log("[USB]", msg);
-  }
-  function setStatus(text, cls) { statusEl.textContent = text; statusEl.className = cls || ""; }
+function log(msg,cls=""){
+  const d=document.createElement("div"); const ts=new Date().toLocaleTimeString("ru-RU");
+  d.innerHTML=`<span class="t">[${ts}]</span> <span class="${cls}"></span>`;
+  d.lastChild.textContent=msg; $("log").appendChild(d); $("log").scrollTop=1e9; console.log("[USB]",msg);
+}
+const hex=(u,n)=>Array.from(u.subarray(0,n),b=>b.toString(16).padStart(2,"0")).join(" ").replace(/(.{48}) /g,"$1\n");
 
-  if (!("usb" in navigator)) {
-    setStatus("WebUSB не поддерживается. Откройте страницу в Chrome или Edge по HTTPS.", "err");
-    log("navigator.usb отсутствует. Нужен Chrome/Edge на компьютере; Firefox и Safari не подходят.", "err");
-    $("btnFind").disabled = true; $("btnAll").disabled = true;
-    return;
-  }
-  if (!window.isSecureContext) log("Страница не в защищённом контексте: WebUSB не заработает.", "err");
-  setStatus("Готово. Подключите датчик и нажмите «Найти устройство».");
-  log("WebUSB доступен.", "ok");
+$("lic").onchange=async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  licBytes=new Uint8Array(await f.arrayBuffer());
+  log(`Файл ${f.name}: ${licBytes.length} байт`, licBytes.length===2048?"ok":"warn");
+  if(licBytes.length!==2048) log("Ожидалось 2048 байт","warn");
+};
 
-  function filters() {
-    const v = parseInt($("vid").value, 16), p = parseInt($("pid").value, 16);
-    const f = {};
-    if (!Number.isNaN(v)) f.vendorId = v;
-    if (!Number.isNaN(p) && !Number.isNaN(v)) f.productId = p;
-    return Object.keys(f).length ? [f] : [];
-  }
+function heartbeat(){
+  const off=+$("half").value, b=new Uint8Array(HDR+PKT);
+  b.set([0x01,0x55,0xAA,0x12,0x34,0x56,0x78,0x9A,0xFF,0xC2,0xFF,0x03,0x00],0);
+  b.set(licBytes.subarray(off,off+PKT),HDR);
+  return b;
+}
+async function sendHB(){
+  try{ const r=await dev.transferOut(EP,heartbeat()); if(r.status!=="ok") log("heartbeat: "+r.status,"warn"); }
+  catch(e){ log("heartbeat ошибка: "+e.message,"err"); }
+}
 
-  function showInfo(dev) {
-    const rows = [
-      ["Название", dev.productName || "(не сообщает)"],
-      ["Производитель", dev.manufacturerName || "(не сообщает)"],
-      ["Серийный номер", dev.serialNumber || "(не сообщает)"],
-      ["VID:PID", `${hex(dev.vendorId)}:${hex(dev.productId)}`],
-      ["Версия USB", `${dev.usbVersionMajor}.${dev.usbVersionMinor}`],
-      ["Класс устройства", `0x${hex(dev.deviceClass, 2)} (${CLASSES[dev.deviceClass] || "?"})`],
-      ["Состояние", dev.opened ? "открыто" : "закрыто"],
-    ];
-    const dl = $("info"); dl.textContent = "";
-    for (const [k, v] of rows) {
-      dl.appendChild(Object.assign(document.createElement("dt"), { textContent: k }));
-      dl.appendChild(Object.assign(document.createElement("dd"), { textContent: v }));
-    }
-    $("infoPanel").hidden = false;
-  }
-
-  function describeConfig(dev) {
-    for (const cfg of dev.configurations) {
-      log(`Конфигурация ${cfg.configurationValue}: интерфейсов ${cfg.interfaces.length}`);
-      for (const itf of cfg.interfaces) {
-        for (const alt of itf.alternates) {
-          log(`  интерфейс ${itf.interfaceNumber}, alt ${alt.alternateSetting}: класс 0x${hex(alt.interfaceClass, 2)} (${CLASSES[alt.interfaceClass] || "?"})`);
-          for (const ep of alt.endpoints) {
-            log(`    endpoint ${ep.endpointNumber} ${ep.direction === "in" ? "IN " : "OUT"} ${ep.type}, пакет ${ep.packetSize}`);
-          }
-        }
-      }
+function handle(buf){
+  st.bytes+=buf.length;
+  if(recChunks && Date.now()<recUntil) recChunks.push(buf.slice());
+  let u=new Uint8Array(carry.length+buf.length); u.set(carry); u.set(buf,carry.length);
+  let i=0;
+  while(u.length-i>=PKT){
+    const p=u.subarray(i,i+PKT);
+    if(p[0]===0xAA && p[1]===0x55){
+      const t=p[2]; st.pk++; st.t[t<=2?t:2]++;
+      lastByType[t]=p.slice();
+      if(t===0){ vis.copyWithin(0,PKT); vis.set(p,vis.length-PKT); }
+      i+=PKT;
+    } else {
+      st.bad++;
+      let j=i+1; while(j+1<u.length && !(u[j]===0xAA&&u[j+1]===0x55)) j++;
+      i=(j+1<u.length)?j:u.length-1;
+      if(u.length-i<PKT) break;
     }
   }
+  carry=u.slice(i);
+}
 
-  async function inspect(dev) {
-    log(`Найдено: ${hex(dev.vendorId)}:${hex(dev.productId)} ${dev.productName || ""}`, "ok");
-    try {
-      await dev.open();
-      if (dev.configuration === null && dev.configurations.length) await dev.selectConfiguration(1);
-      showInfo(dev);
-      describeConfig(dev);
-      setStatus(`Устройство видно: ${dev.productName || hex(dev.vendorId) + ":" + hex(dev.productId)}`, "ok");
-      await dev.close();
-    } catch (e) {
-      showInfo(dev);
-      log(`Не удалось открыть: ${e.name}: ${e.message}`, "err");
-      if (e.name === "SecurityError" || /access denied/i.test(e.message)) {
-        log("Доступ закрыт. Устройству нужен драйвер WinUSB (Zadig → WinUSB → Replace Driver) и закрытая остальная программа, которая его использует.", "warn");
-      }
-      setStatus("Устройство найдено, но открыть его не удалось. Подробности в журнале.", "warn");
-    }
+async function loop(){
+  while(run){
+    try{
+      const r=await dev.transferIn(EP,16384);
+      if(r.status==="ok" && r.data.byteLength) handle(new Uint8Array(r.data.buffer,r.data.byteOffset,r.data.byteLength));
+      else if(r.status==="stall"){ log("IN stall — сброс","warn"); await dev.clearHalt("in",EP); }
+    }catch(e){ if(run){ log("Чтение: "+e.message,"err"); await new Promise(r=>setTimeout(r,300)); if(e.name==="NetworkError"||e.name==="NotFoundError"){ break; } } }
   }
+}
 
-  async function pick(useFilters) {
-    try {
-      const dev = await navigator.usb.requestDevice({ filters: useFilters ? filters() : [] });
-      await inspect(dev);
-    } catch (e) {
-      if (e.name === "NotFoundError") {
-        setStatus("Устройство не выбрано или не найдено.", "warn");
-        log("Окно выбора закрыто или список пуст. Если список пуст: проверьте кабель, порт USB 3.0 и драйвер WinUSB.", "warn");
-      } else {
-        setStatus("Ошибка: " + e.name, "err");
-        log(`${e.name}: ${e.message}`, "err");
-      }
-    }
+function paint(){
+  $("sBytes").textContent=st.bytes.toLocaleString("ru"); $("sPk").textContent=st.pk;
+  $("sT0").textContent=st.t[0]; $("sT1").textContent=st.t[1]; $("sT2").textContent=st.t[2]; $("sBad").textContent=st.bad;
+  const cv=$("cv"), c=cv.getContext("2d"), im=c.createImageData(1024,64);
+  for(let k=0;k<vis.length;k++){ const v=vis[k]; im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v; im.data[k*4+3]=255; }
+  c.putImageData(im,0,0);
+  const out=Object.keys(lastByType).map(t=>`тип ${t}:\n${hex(lastByType[t],64)}`).join("\n\n");
+  $("hex").textContent=out||"—";
+  if(recChunks && Date.now()>=recUntil) finishRec();
+  requestAnimationFrame(()=>setTimeout(paint,250));
+}
+
+$("conn").onclick=async()=>{
+  if(!navigator.usb){ log("WebUSB недоступен (нужен Chrome/Edge и HTTPS или localhost)","err"); return; }
+  if(!licBytes){ log("Сначала выберите файл data194","err"); return; }
+  try{
+    dev=await navigator.usb.requestDevice({filters:[{vendorId:VID,productId:PID}]});
+    await dev.open();
+    if(!dev.configuration) await dev.selectConfiguration(1);
+    await dev.claimInterface(0);
+    log(`Подключено: ${dev.productName||"устройство"} ${VID.toString(16)}:${PID.toString(16)}`,"ok");
+    run=true; $("conn").disabled=true; $("disc").disabled=false; $("rec").disabled=false;
+    await sendHB(); hbTimer=setInterval(sendHB,Math.max(100,+$("hb").value||1000));
+    loop();
+  }catch(e){
+    log(`Не удалось подключиться: ${e.name}: ${e.message}`,"err");
+    if(e.name==="SecurityError") log("Нужен драйвер WinUSB (Zadig) и закрытые другие программы.","warn");
   }
+};
+$("disc").onclick=async()=>{
+  run=false; clearInterval(hbTimer);
+  try{ await dev.releaseInterface(0); await dev.close(); }catch(e){}
+  $("conn").disabled=false; $("disc").disabled=true; $("rec").disabled=true; log("Отключено");
+};
+navigator.usb&&navigator.usb.addEventListener("disconnect",e=>{ if(e.device===dev){ run=false; clearInterval(hbTimer); $("conn").disabled=false; $("disc").disabled=true; $("rec").disabled=true; log("Датчик отключён","err"); }});
 
-  $("btnFind").onclick = () => pick(true);
-  $("btnAll").onclick = () => pick(false);
-  $("btnClear").onclick = () => { logEl.textContent = ""; };
-  $("btnCopy").onclick = async () => {
-    try { await navigator.clipboard.writeText(logEl.textContent); log("Журнал скопирован.", "ok"); }
-    catch { log("Не удалось скопировать.", "err"); }
-  };
-
-  navigator.usb.addEventListener("connect", e => {
-    log(`Подключено: ${hex(e.device.vendorId)}:${hex(e.device.productId)}`, "ok");
-    inspect(e.device);
-  });
-  navigator.usb.addEventListener("disconnect", e => {
-    log(`Отключено: ${hex(e.device.vendorId)}:${hex(e.device.productId)}`, "warn");
-    setStatus("Устройство отключено.", "warn");
-  });
-
-  navigator.usb.getDevices().then(list => {
-    if (list.length) { log(`Ранее разрешённых устройств: ${list.length}`); list.forEach(inspect); }
-  });
-})();
+$("rec").onclick=()=>{ recChunks=[]; recUntil=Date.now()+5000; log("Запись 5 секунд…","warn"); };
+function finishRec(){
+  const parts=recChunks; recChunks=null;
+  const blob=new Blob(parts,{type:"application/octet-stream"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`chison_dump_${Date.now()}.bin`; a.click();
+  log(`Дамп сохранён: ${blob.size} байт`,"ok");
+}
+log(navigator.usb?"WebUSB доступен.":"WebUSB недоступен","t");
+paint();
 </script>
 </body>
 </html>
