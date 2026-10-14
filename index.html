@@ -17,7 +17,9 @@ button{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--ink);font-weight:600}
 button:disabled{opacity:.45;cursor:not-allowed}
 label{font-size:.85rem;color:var(--muted);display:flex;gap:6px;align-items:center}
-input[type=number],select{font:inherit;padding:6px;width:90px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text)}
+input[type=number],input[type=text],select{font:inherit;padding:6px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--text)}
+input[type=number]{width:90px}
+input.mono{font-family:ui-monospace,Menlo,Consolas,monospace;width:100%;max-width:520px}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .stat{border:1px solid var(--line);border-radius:4px;padding:8px}
 .stat b{display:block;font-size:1.2rem}.stat span{color:var(--muted);font-size:.8rem}
@@ -25,6 +27,14 @@ pre,.log{margin:0;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;background
 .ok{color:var(--ok)}.err{color:var(--err)}.warn{color:var(--warn)}.t{color:var(--muted)}
 canvas{width:100%;height:160px;background:#000;border-radius:4px;image-rendering:pixelated}
 small{color:var(--muted)}
+.status{border:2px solid var(--line);border-radius:6px;padding:14px;display:grid;gap:4px}
+.status b{font-size:1.2rem}
+.status.s-ok{border-color:var(--ok)}.status.s-ok b{color:var(--ok)}
+.status.s-wait{border-color:var(--warn)}.status.s-wait b{color:var(--warn)}
+.status.s-bad{border-color:var(--err)}.status.s-bad b{color:var(--err)}
+details summary{cursor:pointer;font-weight:600}
+details[open] summary{margin-bottom:10px}
+details>div{display:grid;gap:10px}
 </style>
 </head>
 <body>
@@ -32,34 +42,69 @@ small{color:var(--muted)}
 <h1>Chison — WebUSB: подключение и захват сырых данных</h1>
 
 <section class="panel">
-  <div class="row">
-    <label>Файл data194 <input type="file" id="lic"></label>
-    <label>Часть <select id="half"><option value="0">0–1023 (как в приложении)</option><option value="1024">1024–2047</option></select></label>
-    <label>Heartbeat, мс <input type="number" id="hb" value="1000" min="100" step="100"></label>
-  </div>
-  <div class="row">
-    <button class="primary" id="conn">Подключить</button>
-    <button id="disc" disabled>Отключить</button>
-    <button id="rec" disabled>Записать 5 с в файл</button>
-  </div>
-  <small>Файл data194 остаётся в браузере и никуда не отправляется. Не выкладывайте его вместе со страницей на публичный хостинг.</small>
+  <strong>Как это работает</strong>
+  <small>Датчик начинает передавать изображение, только если ему регулярно (по умолчанию раз в секунду) отправлять короткий «сигнал»: 13 байт заголовка и блок из 1024 байт. Никакого секретного ключа в этом блоке нет: он всегда одинаковый (счётчик 00…0D, затем два байта, затем заполнение FF). Файл загружать не нужно, страница собирает блок сама. Если датчик «принял», он начнёт присылать пакеты, начинающиеся с AA 55. Именно по ним страница определяет статус ниже.</small>
 </section>
 
 <section class="panel">
+  <strong>Шаг 1. Подключение</strong>
+  <div class="row">
+    <button class="primary" id="conn">Подключить датчик</button>
+    <button id="disc" disabled>Отключить</button>
+    <button id="rec" disabled>Записать 5 с в файл</button>
+  </div>
+  <small>Нужен Chrome или Edge, адрес https:// или localhost, драйвер WinUSB (Zadig) и закрытое приложение производителя.</small>
+</section>
+
+<section class="status s-wait" id="status">
+  <b id="stTitle">Не подключено</b>
+  <span id="stText" class="t">Нажмите «Подключить датчик» и выберите устройство в окне браузера.</span>
+</section>
+
+<section class="panel">
+  <strong>Шаг 2. Данные от датчика</strong>
   <div class="stats">
-    <div class="stat"><b id="sBytes">0</b><span>байт принято</span></div>
-    <div class="stat"><b id="sPk">0</b><span>пакетов по 1024</span></div>
+    <div class="stat"><b id="sRate">0</b><span>пакетов изображения за последние 3 с</span></div>
     <div class="stat"><b id="sT0">0</b><span>тип 0 (изображение)</span></div>
-    <div class="stat"><b id="sT1">0</b><span>тип 1 (инфо)</span></div>
-    <div class="stat"><b id="sT2">0</b><span>тип 2 / прочие</span></div>
-    <div class="stat"><b id="sBad">0</b><span>без заголовка AA 55</span></div>
+    <div class="stat"><b id="sT1">0</b><span>тип 1 (информация)</span></div>
+    <div class="stat"><b id="sT2">0</b><span>тип 2 и прочие</span></div>
+    <div class="stat"><b id="sBad">0</b><span>мусор (нет заголовка AA 55)</span></div>
+    <div class="stat"><b id="sBytes">0</b><span>байт принято всего</span></div>
   </div>
   <canvas id="cv" width="1024" height="64" aria-label="Серое представление последних пакетов изображения"></canvas>
   <small>Холст — грубая визуализация: последние пакеты типа 0, байты как яркость (не готовое изображение).</small>
 </section>
 
 <section class="panel">
-  <strong>Последние пакеты (первые 64 байта)</strong>
+  <details>
+    <summary>Дополнительно: настройка сигнала (если датчик молчит)</summary>
+    <div>
+      <div class="row">
+        <label>Период, мс <input type="number" id="hb" value="1000" min="100" step="100"></label>
+        <label>Вариант блока
+          <select id="mode">
+            <option value="7">07 (как первая половина файла)</option>
+            <option value="8">08 (как вторая половина файла)</option>
+            <option value="alt">чередовать 07 / 08</option>
+          </select>
+        </label>
+      </div>
+      <label style="display:grid">Начало блока, байты 0–13 (hex)
+        <input type="text" class="mono" id="pre" value="00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D">
+      </label>
+      <label>Байт 15 (hex) <input type="text" class="mono" id="b15" value="0A" style="width:70px"></label>
+      <label style="display:grid">Заголовок пакета, 13 байт (hex)
+        <input type="text" class="mono" id="hdr" value="01 55 AA 12 34 56 78 9A FF C2 FF 03 00">
+      </label>
+      <small>Блок = начало (14 байт) + вариант (байт 14) + байт 15 + 1008 байт FF. Что именно проверяет датчик, неизвестно, поэтому можно менять значения и смотреть, пойдут ли пакеты. Применяется при следующем подключении.</small>
+      <strong>Последний отправленный пакет (первые 32 байта)</strong>
+      <pre id="sent">—</pre>
+    </div>
+  </details>
+</section>
+
+<section class="panel">
+  <strong>Последние принятые пакеты (первые 64 байта)</strong>
   <pre id="hex">—</pre>
 </section>
 
@@ -73,10 +118,10 @@ small{color:var(--muted)}
 "use strict";
 const $=id=>document.getElementById(id);
 const VID=0x04B4, PID=0x00F1, EP=1, PKT=1024, HDR=13;
-let dev=null, run=false, hbTimer=null, licBytes=null, recChunks=null, recUntil=0;
+let dev=null, run=false, hbTimer=null, recChunks=null, recUntil=0, hbCount=0, connAt=0, hbMs=1000;
 const st={bytes:0,pk:0,t:[0,0,0],bad:0};
-const lastByType={};
-let carry=new Uint8Array(0), vis=new Uint8Array(1024*64), visPos=0;
+const lastByType={}, t0Times=[];
+let carry=new Uint8Array(0), vis=new Uint8Array(1024*64);
 
 function log(msg,cls=""){
   const d=document.createElement("div"); const ts=new Date().toLocaleTimeString("ru-RU");
@@ -84,23 +129,30 @@ function log(msg,cls=""){
   d.lastChild.textContent=msg; $("log").appendChild(d); $("log").scrollTop=1e9; console.log("[USB]",msg);
 }
 const hex=(u,n)=>Array.from(u.subarray(0,n),b=>b.toString(16).padStart(2,"0")).join(" ").replace(/(.{48}) /g,"$1\n");
+function parseHex(s,n,name){
+  const a=s.trim().split(/[\s,]+/).filter(Boolean).map(x=>parseInt(x,16));
+  if(a.some(x=>!(x>=0&&x<=255))) throw new Error(`${name}: неверный hex`);
+  if(n&&a.length!==n) throw new Error(`${name}: нужно ${n} байт, указано ${a.length}`);
+  return a;
+}
 
-$("lic").onchange=async e=>{
-  const f=e.target.files[0]; if(!f) return;
-  licBytes=new Uint8Array(await f.arrayBuffer());
-  log(`Файл ${f.name}: ${licBytes.length} байт`, licBytes.length===2048?"ok":"warn");
-  if(licBytes.length!==2048) log("Ожидалось 2048 байт","warn");
-};
-
+let cfg=null;
+function readCfg(){
+  cfg={hdr:parseHex($("hdr").value,HDR,"Заголовок пакета"),pre:parseHex($("pre").value,14,"Начало блока"),
+       b15:parseHex($("b15").value,1,"Байт 15")[0],mode:$("mode").value};
+}
 function heartbeat(){
-  const off=+$("half").value, b=new Uint8Array(HDR+PKT);
-  b.set([0x01,0x55,0xAA,0x12,0x34,0x56,0x78,0x9A,0xFF,0xC2,0xFF,0x03,0x00],0);
-  b.set(licBytes.subarray(off,off+PKT),HDR);
+  const b=new Uint8Array(HDR+PKT).fill(0xFF);
+  b.set(cfg.hdr,0); b.set(cfg.pre,HDR);
+  const v=cfg.mode==="alt"?(hbCount%2?8:7):+cfg.mode;
+  b[HDR+14]=v; b[HDR+15]=cfg.b15; hbCount++;
   return b;
 }
 async function sendHB(){
-  try{ const r=await dev.transferOut(EP,heartbeat()); if(r.status!=="ok") log("heartbeat: "+r.status,"warn"); }
-  catch(e){ log("heartbeat ошибка: "+e.message,"err"); }
+  try{
+    const p=heartbeat(); $("sent").textContent=hex(p,32);
+    const r=await dev.transferOut(EP,p); if(r.status!=="ok") log("Отправка сигнала: "+r.status,"warn");
+  }catch(e){ log("Ошибка отправки сигнала: "+e.message,"err"); }
 }
 
 function handle(buf){
@@ -113,7 +165,7 @@ function handle(buf){
     if(p[0]===0xAA && p[1]===0x55){
       const t=p[2]; st.pk++; st.t[t<=2?t:2]++;
       lastByType[t]=p.slice();
-      if(t===0){ vis.copyWithin(0,PKT); vis.set(p,vis.length-PKT); }
+      if(t===0){ t0Times.push(Date.now()); vis.copyWithin(0,PKT); vis.set(p,vis.length-PKT); }
       i+=PKT;
     } else {
       st.bad++;
@@ -135,29 +187,49 @@ async function loop(){
   }
 }
 
+function setStatus(cls,title,text){
+  $("status").className="status "+cls; $("stTitle").textContent=title; $("stText").textContent=text;
+}
+function updateStatus(){
+  const now=Date.now();
+  while(t0Times.length && now-t0Times[0]>3000) t0Times.shift();
+  $("sRate").textContent=t0Times.length;
+  if(!run){ if(!dev) return; setStatus("s-bad","Отключено","Нажмите «Подключить датчик» ещё раз."); return; }
+  const sec=((now-connAt)/1000)|0;
+  if(t0Times.length>0) setStatus("s-ok","Датчик принял сигнал, идёт изображение","Пакеты типа 0 приходят. Всё работает.");
+  else if(st.pk>0) setStatus("s-wait","Датчик отвечает, но изображения пока нет","Приходят пакеты AA 55, но не типа 0. Возможно, датчик ещё запускается или заморожен.");
+  else if(sec<5) setStatus("s-wait","Подключено, ждём ответ датчика…",`Сигнал отправлен ${hbCount} раз. Прошло ${sec} с.`);
+  else setStatus("s-bad","Датчик молчит: сигнал, скорее всего, не принят",
+    "Пакетов AA 55 нет. Что попробовать: в «Дополнительно» сменить вариант блока на 08 или «чередовать», переподключить USB-кабель, закрыть приложение производителя.");
+}
 function paint(){
-  $("sBytes").textContent=st.bytes.toLocaleString("ru"); $("sPk").textContent=st.pk;
+  $("sBytes").textContent=st.bytes.toLocaleString("ru");
   $("sT0").textContent=st.t[0]; $("sT1").textContent=st.t[1]; $("sT2").textContent=st.t[2]; $("sBad").textContent=st.bad;
-  const cv=$("cv"), c=cv.getContext("2d"), im=c.createImageData(1024,64);
+  const c=$("cv").getContext("2d"), im=c.createImageData(1024,64);
   for(let k=0;k<vis.length;k++){ const v=vis[k]; im.data[k*4]=im.data[k*4+1]=im.data[k*4+2]=v; im.data[k*4+3]=255; }
   c.putImageData(im,0,0);
-  const out=Object.keys(lastByType).map(t=>`тип ${t}:\n${hex(lastByType[t],64)}`).join("\n\n");
-  $("hex").textContent=out||"—";
+  $("hex").textContent=Object.keys(lastByType).map(t=>`тип ${t}:\n${hex(lastByType[t],64)}`).join("\n\n")||"—";
+  updateStatus();
   if(recChunks && Date.now()>=recUntil) finishRec();
-  requestAnimationFrame(()=>setTimeout(paint,250));
+  setTimeout(paint,250);
 }
+
+function stopped(){ run=false; clearInterval(hbTimer); $("conn").disabled=false; $("disc").disabled=true; $("rec").disabled=true; }
 
 $("conn").onclick=async()=>{
   if(!navigator.usb){ log("WebUSB недоступен (нужен Chrome/Edge и HTTPS или localhost)","err"); return; }
-  if(!licBytes){ log("Сначала выберите файл data194","err"); return; }
+  try{ readCfg(); }catch(e){ log(e.message,"err"); return; }
   try{
     dev=await navigator.usb.requestDevice({filters:[{vendorId:VID,productId:PID}]});
     await dev.open();
     if(!dev.configuration) await dev.selectConfiguration(1);
     await dev.claimInterface(0);
     log(`Подключено: ${dev.productName||"устройство"} ${VID.toString(16)}:${PID.toString(16)}`,"ok");
+    hbCount=0; connAt=Date.now(); st.pk=0; st.t=[0,0,0]; st.bad=0; st.bytes=0; t0Times.length=0;
+    for(const k in lastByType) delete lastByType[k];
     run=true; $("conn").disabled=true; $("disc").disabled=false; $("rec").disabled=false;
-    await sendHB(); hbTimer=setInterval(sendHB,Math.max(100,+$("hb").value||1000));
+    hbMs=Math.max(100,+$("hb").value||1000);
+    await sendHB(); hbTimer=setInterval(sendHB,hbMs);
     loop();
   }catch(e){
     log(`Не удалось подключиться: ${e.name}: ${e.message}`,"err");
@@ -165,11 +237,11 @@ $("conn").onclick=async()=>{
   }
 };
 $("disc").onclick=async()=>{
-  run=false; clearInterval(hbTimer);
+  stopped();
   try{ await dev.releaseInterface(0); await dev.close(); }catch(e){}
-  $("conn").disabled=false; $("disc").disabled=true; $("rec").disabled=true; log("Отключено");
+  log("Отключено");
 };
-navigator.usb&&navigator.usb.addEventListener("disconnect",e=>{ if(e.device===dev){ run=false; clearInterval(hbTimer); $("conn").disabled=false; $("disc").disabled=true; $("rec").disabled=true; log("Датчик отключён","err"); }});
+navigator.usb&&navigator.usb.addEventListener("disconnect",e=>{ if(e.device===dev){ stopped(); log("Датчик отключён","err"); }});
 
 $("rec").onclick=()=>{ recChunks=[]; recUntil=Date.now()+5000; log("Запись 5 секунд…","warn"); };
 function finishRec(){
