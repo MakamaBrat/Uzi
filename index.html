@@ -319,6 +319,9 @@ table tr.best{background:rgba(26,127,55,.15)}
       <small>Начало блока (байты 0–13) — место, где может быть лицензия или ключ устройства. По умолчанию эти байты берутся как есть с вкладки «Связь»; галочка добавляет перебор одного выбранного байта из них, как для байта заголовка.</small>
     </div>
     <div class="row">
+      <label><input type="checkbox" id="an-lic-rm"> Найти и убрать случайные лицензионные комбинации (из алгоритма FreeTest java)</label>
+    </div>
+    <div class="row">
       <label>Шаг грубого прохода b15
         <select id="an-sa"><option value="32">32</option><option value="16" selected>16</option><option value="8">8</option></select>
       </label>
@@ -453,6 +456,8 @@ function handle(buf){
       const t=p[2]; st.pk++; st.t[t<=2?t:2]++;
       if(curWindow){ curWindow.pk++; curWindow.t[t<=2?t:2]++; if(curWindow.first===null && curWindow.start) curWindow.first=Date.now()-curWindow.start; }
       lastByType[t]=p.slice();
+      if(calBuf) calBuf.push({t:Date.now(),ty:t,h:p.slice(0,64)});
+      if(curWindow&&isNovel(p)) curWindow.nov++;
       if(t===0){ t0Times.push(Date.now()); vis.copyWithin(0,PKT); vis.set(p,vis.length-PKT); }
       i+=PKT;
     } else {
@@ -745,7 +750,7 @@ async function runSweep(opts={}){
     const combo=combos[idx];
     const block=buildBlockFor(combo);
     const start=Date.now();
-    curWindow={pk:0,t:[0,0,0],bad:0,start,first:null};
+    curWindow={pk:0,t:[0,0,0],bad:0,start,first:null,nov:0};
     await sendRaw(block);
     let nextSend=start+innerHb;
     while(Date.now()-start<dwell && !sweepStop && !sweepPaused){
@@ -754,7 +759,7 @@ async function runSweep(opts={}){
       await new Promise(r=>setTimeout(r,50));
     }
     const w=curWindow; curWindow=null;
-    const res={idx, mode:combo.mode, b15:combo.b15, hdrIdx:combo.hdrIdx, hdrVal:combo.hdrVal, preIdx:combo.preIdx, preVal:combo.preVal, pk:w.pk, t0:w.t[0], t1:w.t[1], t2:w.t[2], bad:w.bad, firstMs:w.first};
+    const res={idx, mode:combo.mode, b15:combo.b15, hdrIdx:combo.hdrIdx, hdrVal:combo.hdrVal, preIdx:combo.preIdx, preVal:combo.preVal, pk:w.pk, t0:w.t[0], t1:w.t[1], t2:w.t[2], bad:w.bad, firstMs:w.first, nov:w.nov};
     sweepResults.push(res); addSweepRow(res); drawCharts();
     $("swSave").disabled=false;
     $("swProgress").textContent=`${idx+1} / ${combos.length} — осталось ~${fmtMs((combos.length-idx-1)*dwell)}`;
@@ -838,6 +843,32 @@ $("swStop").onclick=()=>{ sweepStop=true; };
 
 /* ==================== АНАЛИЗАТОР ==================== */
 const OVH=25, PRIO=[0x0A,0x00,0xFF,0x01];
+// Базовая линия: датчик гонит фоновый поток AA55 независимо от параметров, поэтому «есть пакеты» ничего не значит.
+// Реакция = пакеты, чьи обычно-постоянные байты (по калибровке) отличаются от фона, либо неизвестного типа.
+let anBase=null, calBuf=null;
+function isNovel(p){ if(!anBase) return false; const m=anBase[p[2]]; if(!m) return true;
+  for(let k=0;k<m.pos.length;k++) if(p[m.pos[k]]!==m.val[k]) return true; return false; }
+const anSig=r=>r.t0>0?1e6:(anBase?((r.nov||0)>=2?r.nov:0):r.pk);
+async function anCalibrate(P){
+  readCfg(); pauseHB();
+  const blk=buildBlockFor({mode:P.modes[0],b15:cfg.b15,hdrVal:null,preVal:null});
+  calBuf=[]; const t0=Date.now(); let nx=t0+300; await sendRaw(blk);
+  while(Date.now()-t0<4000&&!anAbort){ if(Date.now()>=nx){ nx+=300; await sendRaw(blk); } await sleep(50); }
+  const buf=calBuf; calBuf=null; resumeHB();
+  if(buf.length<6){ log("Калибровка: фоновый поток не получен — используется прежний критерий (число пакетов)","warn"); return null; }
+  const by={}; buf.forEach(x=>(by[x.ty]=by[x.ty]||[]).push(x.h));
+  const base={}, desc=[];
+  for(const ty in by){ const L=by[ty], pos=[], val=[];
+    if(L.length>=3) for(let k=3;k<64;k++) if(L.every(h=>h[k]===L[0][k])){ pos.push(k); val.push(L[0][k]); }
+    base[ty]={pos,val}; desc.push(`тип ${ty}: ${L.length} шт, постоянных байт ${pos.length}`); }
+  const ts=buf.map(x=>x.t-t0), gaps=[]; for(let i=1;i<ts.length;i++) if(ts[i]-ts[i-1]>100) gaps.push(ts[i]-ts[i-1]);
+  gaps.sort((a,b)=>a-b);
+  const g95=gaps.length?gaps[Math.min(gaps.length-1,Math.floor(gaps.length*.95))]:200;
+  const need=Math.min(P.dwell,Math.max(600,Math.ceil((g95*1.3+150)/50)*50));
+  log(`Калибровка: ${buf.length} пакетов за 4 с (${desc.join("; ")}); пауза между пачками до ${g95} мс → минимальная выдержка ${need} мс`,"ok");
+  if(P.opt.adapt&&need<anDwell){ log(`Анализатор: выдержка ${anDwell} → ${need} мс по калибровке`,"warn"); anDwell=need; }
+  return base;
+}
 let anRunning=false, anAbort=false, anStat={}, anAll=[], anBest=null, anDwell=0, anTested=new Set(), anStart=0;
 let anStageRows={}, anCurrentStage=null, anSelectedStage=null, anTotalElapsedMs=0;
 const AN_KEY="chison_analyzer_progress_v1";
@@ -1016,7 +1047,7 @@ function anRender(){
 const anKey=c=>`${c.mode}|${c.b15}|${c.hdrVal==null?"-":c.hdrIdx+":"+c.hdrVal}|${c.preVal==null?"-":c.preIdx+":"+c.preVal}`;
 function anCenters(P,dim){
   const noLic=r=>r.preVal===null||r.preVal===undefined;
-  const list=anAll.filter(r=>r.pk>0&&(dim==="b"?r.hdrVal==null&&noLic(r):dim==="h"?r.hdrVal!=null&&noLic(r):r.preVal!=null)).sort((a,b)=>b.t0-a.t0||b.pk-a.pk);
+  const list=anAll.filter(r=>anSig(r)>0&&(dim==="b"?r.hdrVal==null&&noLic(r):dim==="h"?r.hdrVal!=null&&noLic(r):r.preVal!=null)).sort((a,b)=>anSig(b)-anSig(a));
   const seen=new Set(), out=[];
   for(const r of list){
     const k=dim==="b"?r.mode+"|"+r.b15:dim==="h"?r.mode+"|"+r.b15+"|"+r.hdrVal:r.mode+"|"+r.b15+"|"+r.hdrVal+"|"+r.preVal;
@@ -1041,20 +1072,20 @@ async function anExec(id,combos,P){
     if(!r){ anAbort=true; break; }
     r.results.forEach(x=>{ anTested.add(anKey(x)); all.push(x); anAll.push(x); });
     anStageRows[id]=all;
-    anStat[id]={status:"running",n:combos.length,ms:Date.now()-t0,resp:all.filter(x=>x.pk>0).length,dwell:anDwell};
+    anStat[id]={status:"running",n:combos.length,ms:Date.now()-t0,resp:all.filter(x=>anSig(x)>0).length,dwell:anDwell};
     anSaveProgress(); anRender();
     if(r.foundStop) break;
     if(r.stopped){ anAbort=true; break; }
   }
   anStageRows[id]=all;
-  const resp=all.filter(x=>x.pk>0).length, fnd=all.some(x=>x.t0>0);
+  const resp=all.filter(x=>anSig(x)>0).length, fnd=all.some(x=>x.t0>0);
   // реальный "Стоп" (не пауза) прерывает выполнение раньше плана — не считаем этап завершённым,
   // чтобы при продолжении он досчитал оставшиеся комбинации, а не был пропущен как готовый
   anStat[id]=anAbort&&!fnd?{status:"stopped",n:all.length,ms:Date.now()-t0,resp,dwell:anDwell}
                           :{status:fnd?"hit":"done",n:all.length,ms:Date.now()-t0,resp,dwell:anDwell};
   if(fnd) anBest=all.slice().sort((a,b)=>b.t0-a.t0||b.pk-a.pk)[0];
   // адаптивная выдержка: пересчитываем оставшиеся этапы по измеренной задержке ответа
-  if(P.opt.adapt&&!fnd){
+  if(P.opt.adapt&&!fnd&&!anBase){
     const lat=anAll.filter(x=>x.pk>0&&x.firstMs!=null).map(x=>x.firstMs);
     if(lat.length){
       const mx=Math.max(...lat), eff=Math.min(P.dwell,Math.max(500,Math.ceil((mx*2+100)/50)*50));
@@ -1065,6 +1096,7 @@ async function anExec(id,combos,P){
   return {found:fnd,results:all};
 }
 async function anPlanRun(P){
+  anBase=await anCalibrate(P); if(anAbort) return;
   const mk=(m,b,hv,pIdx,pv)=>({mode:m,b15:b,hdrIdx:P.hdrIdx,hdrVal:(hv===undefined?null:hv),preIdx:(pIdx===undefined?P.licIdx:pIdx),preVal:(pv===undefined?null:pv)});
   const grid=(step)=>gridVals(step,P.opt.prio).flatMap(b=>P.modes.map(m=>mk(m,b,null)));
   const skip=(id,reason)=>{ anStat[id]={status:"skipped",n:0,ms:0,resp:0,reason}; anRender(); };
@@ -1181,7 +1213,7 @@ function anInputsSnapshot(){
     "an-o-early":$("an-o-early").checked,"an-o-prio":$("an-o-prio").checked,
     "an-o-hier":$("an-o-hier").checked,"an-o-adapt":$("an-o-adapt").checked};
 }
-function anCompactRow(x){ return {mode:x.mode,b15:x.b15,hdrIdx:x.hdrIdx,hdrVal:x.hdrVal,preIdx:x.preIdx,preVal:x.preVal,pk:x.pk,t0:x.t0,firstMs:x.firstMs}; }
+function anCompactRow(x){ return {mode:x.mode,b15:x.b15,hdrIdx:x.hdrIdx,hdrVal:x.hdrVal,preIdx:x.preIdx,preVal:x.preVal,pk:x.pk,t0:x.t0,firstMs:x.firstMs,nov:x.nov||0}; }
 function anSnapshotData(){
   const stageRows={}; for(const k in anStageRows) stageRows[k]=anStageRows[k].map(anCompactRow);
   return {v:1, ts:Date.now(), inputs:anInputsSnapshot(), anStat, anBest, anDwell,
