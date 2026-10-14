@@ -47,6 +47,26 @@ table thead th{position:sticky;top:0;background:var(--panel)}
 table tr.best{background:rgba(26,127,55,.15)}
 .legend{display:flex;gap:14px;font-size:.78rem;color:var(--muted)}
 .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.an-n{fill:var(--panel);stroke:var(--line);stroke-width:1.5}
+.an-n.running{stroke:var(--warn);stroke-width:3}
+.an-n.done{stroke:var(--muted)}
+.an-n.hit{stroke:var(--ok);stroke-width:3;fill:rgba(26,127,55,.14)}
+.an-n.skipped{stroke-dasharray:4 3;opacity:.55}
+.an-n.ghost{stroke-dasharray:5 4}
+.an-n.fail{stroke:var(--err);stroke-dasharray:5 4}
+.an-t{fill:var(--text);font:600 12.5px system-ui,sans-serif}
+.an-s{fill:var(--muted);font:11px system-ui,sans-serif}
+.an-s2{fill:var(--muted);font:10px system-ui,sans-serif;opacity:.85}
+.an-edge{stroke:var(--muted);fill:none;stroke-width:1.5}
+.an-arrow{fill:var(--muted)}
+.an-lbl{fill:var(--muted);font:10px system-ui,sans-serif}
+.bars{display:grid;gap:8px}
+.bar{display:grid;grid-template-columns:minmax(130px,34%) 1fr auto;gap:8px;align-items:center;font-size:.82rem}
+.bar .tr{height:14px;background:var(--bg);border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.bar .fl{height:100%}
+.bar .fl.bad{background:var(--err)}.bar .fl.ok{background:var(--ok)}
+.stat.sel{outline:2px solid var(--accent)}
+.opt{display:grid;gap:2px}
 </style>
 </head>
 <body>
@@ -57,6 +77,7 @@ table tr.best{background:rgba(26,127,55,.15)}
   <button class="tabbtn active" data-tab="conn">Связь</button>
   <button class="tabbtn" data-tab="gen">Генератор</button>
   <button class="tabbtn" data-tab="stress">Стресс-тест</button>
+  <button class="tabbtn" data-tab="an">Анализатор</button>
 </nav>
 
 <!-- ==================== ВКЛАДКА: СВЯЗЬ ==================== -->
@@ -153,6 +174,16 @@ table tr.best{background:rgba(26,127,55,.15)}
     <button class="primary" id="genSend">Сгенерировать и отправить</button>
     <button id="genRandom">Случайные значения и отправить</button>
   </div>
+  <div class="row">
+    <button id="genBurst" title="Шлёт блок 10 раз с паузой 100 мс — датчик чаще «просыпается»">Серия ×10</button>
+    <button id="genPrev">Байт 15 −1 и отправить</button>
+    <button id="genNext">Байт 15 +1 и отправить</button>
+  </div>
+  <div class="row">
+    <button id="genBest">Взять лучшую из перебора и отправить</button>
+    <button id="genApply">Сделать основным сигналом</button>
+  </div>
+  <small>«Сделать основным сигналом» переносит текущие значения во вкладку «Связь», и датчик начнёт получать именно их каждую секунду.</small>
   <small id="genSentInfo" class="t">—</small>
   <strong id="genResult">Результат появится здесь после отправки (ждём ~1.5 с ответа).</strong>
 </section>
@@ -165,6 +196,17 @@ table tr.best{background:rgba(26,127,55,.15)}
 <section class="panel">
   <strong>Перебор параметров сигнала</strong>
   <small>Перебирает все комбинации выбранных диапазонов, для каждой комбинации отправляет сигнал (повторяя его с периодом ниже, пока идёт «выдержка» для этой комбинации) и считает, сколько пакетов AA 55 пришло в ответ. Нужно быть подключённым (вкладка «Связь»). Максимум 800 комбинаций за один запуск — сузьте диапазоны, если больше.</small>
+  <div class="row">
+    <strong>Быстрые пресеты:</strong>
+    <button id="pr-fast">⚡ Грубо (шаг 16)</button>
+    <button id="pr-mid">Средне (шаг 4)</button>
+    <button id="pr-full">Полный (шаг 1)</button>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="sw-stopimg" checked> остановить при первом изображении (тип 0)</label>
+    <label><input type="checkbox" id="sw-auto" checked> после грубого прохода автоматически уточнить вокруг лучшего</label>
+    <label><input type="checkbox" id="sw-prio" checked> сначала вероятные значения (0A, 00, FF, 01…)</label>
+  </div>
   <div class="row">
     <label><input type="checkbox" id="sw-m7" checked> вариант 07</label>
     <label><input type="checkbox" id="sw-m8"> вариант 08</label>
@@ -193,6 +235,11 @@ table tr.best{background:rgba(26,127,55,.15)}
     <span id="swProgress" class="t">—</span>
   </div>
   <div class="row">
+    <button id="swRefine">🎯 Уточнить вокруг лучшей (шаг 1)</button>
+    <button id="swRetest">Перепроверить ответившие (3 с)</button>
+    <button id="swApply">Сделать лучшую основным сигналом</button>
+  </div>
+  <div class="row">
     <strong>Комбинаций:</strong> <span id="swCombosCount">—</span>
     <strong>Примерное время всего теста:</strong> <span id="swEstTime">—</span>
   </div>
@@ -214,10 +261,89 @@ table tr.best{background:rgba(26,127,55,.15)}
   <strong>Результаты по комбинациям</strong>
   <div class="tblwrap">
     <table id="swTable">
-      <thead><tr><th>#</th><th>mode</th><th>b15</th><th>hdr[№]</th><th>всего</th><th>тип0</th><th>тип1</th><th>тип2</th><th>мусор</th></tr></thead>
+      <thead><tr><th>#</th><th>mode</th><th>b15</th><th>hdr[№]</th><th>pre[№]</th><th>всего</th><th>тип0</th><th>тип1</th><th>тип2</th><th>мусор</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
+</section>
+
+</div>
+
+<!-- ==================== ВКЛАДКА: АНАЛИЗАТОР ==================== -->
+<div class="tabpanel" id="tab-an">
+
+<section class="panel">
+  <strong>Анализатор: сколько комбинаций и сколько ждать</strong>
+  <small>Считает, сколько комбинаций нужно проверить, чтобы перебрать всё пространство, и строит дерево оптимизированного поиска: грубый проход → уточнение вокруг ответивших → запасной полный перебор. «Запустить по дереву» выполняет этапы сам; после каждого этапа дерево пересчитывается (факт вместо плана, новая выдержка, остаток времени). Нужно быть подключённым (вкладка «Связь»).</small>
+  <fieldset id="anCtl" style="border:0;padding:0;margin:0;min-width:0;display:grid;gap:10px">
+    <div class="row">
+      <label><input type="checkbox" id="an-m7" checked> вариант 07</label>
+      <label><input type="checkbox" id="an-m8" checked> вариант 08</label>
+      <label>Выдержка на комбинацию, мс <input type="number" id="an-dwell" value="1500" min="200" step="100"></label>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="an-hdr"> добавить в поиск байт заголовка №</label>
+      <select id="an-hdridx"></select>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="an-lic"> лицензионные варианты: перебрать байт начала блока (0–13) №</label>
+      <select id="an-licidx"></select>
+      <small>Начало блока (байты 0–13) — место, где может быть лицензия или ключ устройства. По умолчанию эти байты берутся как есть с вкладки «Связь»; галочка добавляет перебор одного выбранного байта из них, как для байта заголовка.</small>
+    </div>
+    <div class="row">
+      <label>Шаг грубого прохода b15
+        <select id="an-sa"><option value="32">32</option><option value="16" selected>16</option><option value="8">8</option></select>
+      </label>
+      <label>Уточнять K лучших ответивших <input type="number" id="an-k" value="2" min="1" max="5" style="width:70px"></label>
+    </div>
+  </fieldset>
+</section>
+
+<section class="panel">
+  <strong>Пространство поиска: сколько всего комбинаций</strong>
+  <div class="stats" id="anSpace"></div>
+  <small>Время = комбинации × (выдержка + ~25 мс служебных). Байты блока, не включённые в перебор (начало 0–13 без лицензионных вариантов, заполнение FF), считаются фиксированными и в пространство не входят.</small>
+</section>
+
+<section class="panel">
+  <strong>Оптимизации, которые применяются по дереву</strong>
+  <div class="opt"><label><input type="checkbox" id="an-o-early" checked> Остановка на первом изображении</label>
+    <small>Не ждёт конца перебора: в среднем экономит половину прохода.</small></div>
+  <div class="opt"><label><input type="checkbox" id="an-o-prio" checked> Вероятные значения первыми (0A, 00, FF, 01)</label>
+    <small>Ставит их в начало очереди каждого этапа.</small></div>
+  <div class="opt"><label><input type="checkbox" id="an-o-hier" checked> Дерево: грубо → точно, с запасным полным перебором</label>
+    <small>Сокращает число комбинаций в десятки раз, если датчик хоть как-то реагирует на значения рядом с рабочим. Если нужен ровно один точный байт, спасёт запасной перебор (он гарантирует охват, но занимает полное время).</small></div>
+  <div class="opt"><label><input type="checkbox" id="an-o-adapt" checked> Адаптивная выдержка</label>
+    <small>После первых ответов датчика выдержка сокращается до ~2× измеренной задержки (не меньше 500 мс). Все следующие этапы пересчитываются.</small></div>
+</section>
+
+<section class="panel">
+  <strong>Дерево поиска</strong>
+  <div class="row">
+    <button class="primary" id="anStart">Запустить по дереву</button>
+    <button id="anStop" disabled>Остановить</button>
+    <button id="anApply" disabled>Сделать найденное основным сигналом</button>
+    <span id="anElapsed" class="t">—</span>
+  </div>
+  <div class="stats" id="anSummary"></div>
+  <div style="overflow-x:auto" id="anTreeWrap"></div>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--warn)"></i>идёт</span>
+    <span><i class="sw" style="background:var(--ok)"></i>изображение найдено</span>
+    <span><i class="sw" style="background:var(--muted)"></i>выполнено</span>
+    <span><i class="sw" style="background:var(--err)"></i>откат: ответов нет</span>
+  </div>
+</section>
+
+<section class="panel">
+  <strong>Сравнение времени ожидания</strong>
+  <div class="bars" id="anBars"></div>
+  <small>«По дереву, типичный путь» предполагает, что на значения рядом с рабочим датчик отвечает (хотя бы пакетами AA 55) и что ответивший один. «Худший» — все этапы без успеха плюс запасной перебор.</small>
+</section>
+
+<section class="panel">
+  <strong>Ограничения метода</strong>
+  <small>Грубый проход может пропустить рабочее значение, если датчик реагирует только на один точный байт: тогда спасает запасной перебор, он гарантирует охват. Короткая выдержка повышает риск принять хвост ответа на предыдущую комбинацию за ответ на текущую, поэтому найденное подтверждается отдельным запуском на 3 с после паузы. Это проверка, а не доказательство.</small>
 </section>
 
 </div>
@@ -277,7 +403,9 @@ function buildBlockFor(combo){
   const b=new Uint8Array(HDR+PKT).fill(0xFF);
   const hdr2=cfg.hdr.slice();
   if(combo.hdrVal!==null && combo.hdrVal!==undefined) hdr2[combo.hdrIdx]=combo.hdrVal;
-  b.set(hdr2,0); b.set(cfg.pre,HDR);
+  const pre2=cfg.pre.slice();
+  if(combo.preVal!==null && combo.preVal!==undefined) pre2[combo.preIdx]=combo.preVal;
+  b.set(hdr2,0); b.set(pre2,HDR);
   b[HDR+14]=combo.mode; b[HDR+15]=combo.b15;
   return b;
 }
@@ -291,7 +419,7 @@ function handle(buf){
     const p=u.subarray(i,i+PKT);
     if(p[0]===0xAA && p[1]===0x55){
       const t=p[2]; st.pk++; st.t[t<=2?t:2]++;
-      if(curWindow){ curWindow.pk++; curWindow.t[t<=2?t:2]++; }
+      if(curWindow){ curWindow.pk++; curWindow.t[t<=2?t:2]++; if(curWindow.first===null && curWindow.start) curWindow.first=Date.now()-curWindow.start; }
       lastByType[t]=p.slice();
       if(t===0){ t0Times.push(Date.now()); vis.copyWithin(0,PKT); vis.set(p,vis.length-PKT); }
       i+=PKT;
@@ -331,6 +459,7 @@ function updateStatus(){
     "Пакетов AA 55 нет. Что попробовать: во вкладке «Стресс-тест» перебрать варианты байта 15 и заголовка, переподключить USB-кабель, закрыть приложение производителя.");
 }
 function paint(){
+  if(anRunning) $("anElapsed").textContent="прошло "+fmtDur(Date.now()-anStart);
   $("sBytes").textContent=st.bytes.toLocaleString("ru");
   $("sT0").textContent=st.t[0]; $("sT1").textContent=st.t[1]; $("sT2").textContent=st.t[2]; $("sBad").textContent=st.bad;
   const c=$("cv").getContext("2d"), im=c.createImageData(1024,64);
@@ -388,40 +517,82 @@ document.querySelectorAll(".tabbtn").forEach(btn=>btn.onclick=()=>{
 });
 
 // заполнить выпадающие списки «номер байта заголовка» (0..12)
-["gen-hdridx","sw-hdridx"].forEach(id=>{
+["gen-hdridx","sw-hdridx","an-hdridx"].forEach(id=>{
   const sel=$(id);
   for(let i=0;i<HDR;i++){ const o=document.createElement("option"); o.value=i; o.textContent="№"+i; sel.appendChild(o); }
 });
+{ const sel=$("an-licidx"); for(let i=0;i<14;i++){ const o=document.createElement("option"); o.value=i; o.textContent="№"+i; sel.appendChild(o); } }
 
-/* ==================== ГЕНЕРАТОР ОДНОГО ПАКЕТА ==================== */
-async function genSendOnce(){
-  if(!run || !dev){ log("Сначала подключите датчик (вкладка «Связь»)","err"); return; }
-  if(sweepRunning){ log("Сначала остановите стресс-тест","err"); return; }
-  try{ readCfg(); }catch(e){ log(e.message,"err"); return; }
-  const combo={
+/* ==================== ОБЩИЕ ХЕЛПЕРЫ ==================== */
+const hx=v=>v.toString(16).padStart(2,"0").toUpperCase();
+function comboText(c){ return `mode=${c.mode} b15=0x${hx(c.b15)}`+(c.hdrVal!==null&&c.hdrVal!==undefined?` hdr[${c.hdrIdx}]=0x${hx(c.hdrVal)}`:"")+(c.preVal!==null&&c.preVal!==undefined?` pre[${c.preIdx}]=0x${hx(c.preVal)}`:""); }
+function getBest(){
+  if(!sweepResults.length) return null;
+  let best=sweepResults[0];
+  for(const r of sweepResults){ if(r.t0>best.t0 || (r.t0===best.t0 && r.pk>best.pk)) best=r; }
+  return best;
+}
+// перенести комбинацию в основной сигнал (вкладка «Связь»); heartbeat() читает cfg на лету
+function applyAsMain(c){
+  try{
+    $("mode").value=String(c.mode); $("b15").value=hx(c.b15);
+    if(c.hdrVal!==null&&c.hdrVal!==undefined){
+      const h=parseHex($("hdr").value,HDR,"Заголовок пакета"); h[c.hdrIdx]=c.hdrVal;
+      $("hdr").value=h.map(hx).join(" ");
+    }
+    if(c.preVal!==null&&c.preVal!==undefined){
+      const p=parseHex($("pre").value,14,"Начало блока"); p[c.preIdx]=c.preVal;
+      $("pre").value=p.map(hx).join(" ");
+    }
+    readCfg();
+    log("Основной сигнал обновлён: "+comboText(c),"ok");
+  }catch(e){ log(e.message,"err"); }
+}
+function fillGen(c){
+  $("gen-mode").value=String(c.mode); $("gen-b15").value=hx(c.b15);
+  if(c.hdrVal!==null&&c.hdrVal!==undefined){ $("gen-hdrvary").checked=true; $("gen-hdridx").value=c.hdrIdx; $("gen-hdrval").value=hx(c.hdrVal); }
+}
+function readGenCombo(){
+  return {
     mode:+$("gen-mode").value,
     b15:parseHex($("gen-b15").value,1,"Байт 15")[0],
     hdrIdx:+$("gen-hdridx").value,
     hdrVal:$("gen-hdrvary").checked?parseHex($("gen-hdrval").value,1,"Значение байта заголовка")[0]:null
   };
+}
+
+/* ==================== ГЕНЕРАТОР ОДНОГО ПАКЕТА ==================== */
+async function genSendOnce(burst=1){
+  if(!run || !dev){ log("Сначала подключите датчик (вкладка «Связь»)","err"); return; }
+  if(sweepRunning){ log("Сначала остановите стресс-тест","err"); return; }
+  try{ readCfg(); }catch(e){ log(e.message,"err"); return; }
+  let combo; try{ combo=readGenCombo(); }catch(e){ log(e.message,"err"); return; }
   pauseHB();
   const block=buildBlockFor(combo);
   curWindow={pk:0,t:[0,0,0],bad:0};
-  await sendRaw(block);
-  $("genSentInfo").textContent=`Отправлено: mode=${combo.mode} b15=0x${combo.b15.toString(16).padStart(2,"0")}`+
-    (combo.hdrVal!==null?` hdr[${combo.hdrIdx}]=0x${combo.hdrVal.toString(16).padStart(2,"0")}`:"");
+  for(let i=0;i<burst;i++){ await sendRaw(block); if(i<burst-1) await new Promise(r=>setTimeout(r,100)); }
+  $("genSentInfo").textContent=`Отправлено${burst>1?" ×"+burst:""}: ${comboText(combo)}`;
   $("genResult").textContent="Ждём ответа…";
   await new Promise(r=>setTimeout(r,1500));
   const w=curWindow; curWindow=null;
   $("genResult").textContent=`Пакетов AA 55: ${w.pk} (тип0: ${w.t[0]}, тип1: ${w.t[1]}, тип2/др.: ${w.t[2]}, мусора: ${w.bad})`;
-  if(w.pk>0) log("Генератор: датчик ответил на этот пакет","ok");
+  if(w.pk>0) log("Генератор: датчик ответил на этот пакет"+(w.t[0]>0?" — идёт изображение! Нажмите «Сделать основным сигналом»":""),"ok");
   resumeHB();
 }
-$("genSend").onclick=genSendOnce;
+$("genSend").onclick=()=>genSendOnce(1);
+$("genBurst").onclick=()=>genSendOnce(10);
+$("genPrev").onclick=()=>{ try{ $("gen-b15").value=hx((parseHex($("gen-b15").value,1,"Байт 15")[0]-1)&0xFF); genSendOnce(1); }catch(e){ log(e.message,"err"); } };
+$("genNext").onclick=()=>{ try{ $("gen-b15").value=hx((parseHex($("gen-b15").value,1,"Байт 15")[0]+1)&0xFF); genSendOnce(1); }catch(e){ log(e.message,"err"); } };
+$("genBest").onclick=()=>{
+  const b=getBest();
+  if(!b||b.pk===0){ log("В переборе пока нет комбинаций с ответом датчика","warn"); return; }
+  fillGen(b); genSendOnce(1);
+};
+$("genApply").onclick=()=>{ try{ applyAsMain(readGenCombo()); }catch(e){ log(e.message,"err"); } };
 $("genRandom").onclick=()=>{
   $("gen-b15").value=(Math.floor(Math.random()*256)).toString(16).padStart(2,"0");
   if($("gen-hdrvary").checked) $("gen-hdrval").value=(Math.floor(Math.random()*256)).toString(16).padStart(2,"0");
-  genSendOnce();
+  genSendOnce(1);
 };
 
 /* ==================== СТРЕСС-ТЕСТ / ПЕРЕБОР ==================== */
@@ -435,6 +606,10 @@ function buildCombos(){
   const b15step=Math.max(1,+$("sw-b15step").value||1);
   const b15list=[]; for(let v=b15min; v<=b15max; v+=b15step) b15list.push(v&0xFF);
   if(!b15list.length) b15list.push(b15min&0xFF);
+  if($("sw-prio").checked){
+    const pr=[0x0A,0x00,0xFF,0x01,0x07,0x08,0x0B,0x09];
+    b15list.sort((a,b)=>{ const ia=pr.indexOf(a), ib=pr.indexOf(b); return (ia<0?99:ia)-(ib<0?99:ib)||a-b; });
+  }
 
   const varyHdr=$("sw-hdrvary").checked;
   const hdrIdx=+$("sw-hdridx").value;
@@ -454,7 +629,8 @@ function buildCombos(){
 function addSweepRow(r){
   const tr=document.createElement("tr"); tr.dataset.idx=r.idx;
   tr.innerHTML=`<td>${r.idx}</td><td>${r.mode}</td><td>0x${r.b15.toString(16).padStart(2,"0")}</td>`+
-    `<td>${r.hdrVal===null?"—":`№${r.hdrIdx}=0x${r.hdrVal.toString(16).padStart(2,"0")}`}</td>`+
+    `<td>${r.hdrVal==null?"—":`№${r.hdrIdx}=0x${r.hdrVal.toString(16).padStart(2,"0")}`}</td>`+
+    `<td>${r.preVal==null?"—":`№${r.preIdx}=0x${r.preVal.toString(16).padStart(2,"0")}`}</td>`+
     `<td>${r.pk}</td><td>${r.t0}</td><td>${r.t1}</td><td>${r.t2}</td><td>${r.bad}</td>`;
   const tbody=$("swTable").querySelector("tbody");
   tbody.appendChild(tr);
@@ -499,8 +675,7 @@ $("sw-hdridx").addEventListener("change",updateEstimate);
 
 function highlightBest(){
   if(!sweepResults.length) return;
-  let best=sweepResults[0];
-  for(const r of sweepResults){ if(r.t0>best.t0 || (r.t0===best.t0 && r.pk>best.pk)) best=r; }
+  const best=getBest();
   $("swTable").querySelectorAll("tbody tr").forEach(tr=>{ if(+tr.dataset.idx===best.idx) tr.classList.add("best"); });
   if(best.pk>0||best.t0>0){
     log(`Лучшая комбинация #${best.idx}: mode=${best.mode} b15=0x${best.b15.toString(16).padStart(2,"0")}`+
@@ -511,10 +686,11 @@ function highlightBest(){
   }
 }
 
-async function runSweep(){
+async function runSweep(opts={}){
   if(!run || !dev){ log("Сначала подключите датчик (вкладка «Связь»)","err"); return; }
+  if(sweepRunning){ log("Перебор уже идёт","err"); return; }
   let combos;
-  try{ readCfg(); combos=buildCombos(); }catch(e){ log(e.message,"err"); return; }
+  try{ readCfg(); combos=opts.combos||buildCombos(); }catch(e){ log(e.message,"err"); return; }
   if(combos.length>800){ log(`Слишком много комбинаций (${combos.length}). Сузьте диапазоны или увеличьте шаг — максимум 800 за один запуск.`,"err"); return; }
   if(!combos.length){ log("Нет ни одной комбинации для перебора — проверьте диапазоны.","err"); return; }
 
@@ -524,41 +700,91 @@ async function runSweep(){
   log(`Стресс-тест: запуск перебора, комбинаций — ${combos.length}`,"warn");
   pauseHB();
 
-  const dwell=Math.max(200,+$("sw-dwell").value||1500);
+  const dwell=opts.dwell||Math.max(200,+$("sw-dwell").value||1500);
   const innerHb=Math.max(50,+$("sw-freq").value||300);
+  const stopImg=opts.stopImg!==undefined?opts.stopImg:$("sw-stopimg").checked;
+  let foundStop=false;
   updateEstimate();
 
   for(let idx=0; idx<combos.length && !sweepStop; idx++){
     const combo=combos[idx];
     const block=buildBlockFor(combo);
-    curWindow={pk:0,t:[0,0,0],bad:0};
     const start=Date.now();
+    curWindow={pk:0,t:[0,0,0],bad:0,start,first:null};
     await sendRaw(block);
     let nextSend=start+innerHb;
     while(Date.now()-start<dwell && !sweepStop){
+      if(stopImg && curWindow.t[0]>0) break;
       if(Date.now()>=nextSend){ await sendRaw(block); nextSend+=innerHb; }
       await new Promise(r=>setTimeout(r,50));
     }
     const w=curWindow; curWindow=null;
-    const res={idx, mode:combo.mode, b15:combo.b15, hdrIdx:combo.hdrIdx, hdrVal:combo.hdrVal, pk:w.pk, t0:w.t[0], t1:w.t[1], t2:w.t[2], bad:w.bad};
+    const res={idx, mode:combo.mode, b15:combo.b15, hdrIdx:combo.hdrIdx, hdrVal:combo.hdrVal, preIdx:combo.preIdx, preVal:combo.preVal, pk:w.pk, t0:w.t[0], t1:w.t[1], t2:w.t[2], bad:w.bad, firstMs:w.first};
     sweepResults.push(res); addSweepRow(res); drawCharts();
     $("swSave").disabled=false;
     $("swProgress").textContent=`${idx+1} / ${combos.length} — осталось ~${fmtMs((combos.length-idx-1)*dwell)}`;
+    if(stopImg && res.t0>0){ foundStop=true; sweepStop=true; log("Найдено изображение: "+comboText(combo),"ok"); }
   }
   curWindow=null; sweepRunning=false;
   $("swStart").disabled=false; $("swStop").disabled=true;
-  log(sweepStop?"Стресс-тест остановлен пользователем":"Стресс-тест завершён","warn");
+  log(foundStop?"Стресс-тест остановлен: изображение найдено":sweepStop?"Стресс-тест остановлен пользователем":"Стресс-тест завершён","warn");
   highlightBest();
   resumeHB();
+  const ret={foundStop,stopped:sweepStop&&!foundStop,results:sweepResults.slice()};
+  // грубый проход → автоматически уточняем вокруг лучшего
+  const best=getBest(), step=Math.max(1,+$("sw-b15step").value||1);
+  if($("sw-auto").checked && !sweepStop && !opts.combos && best && best.pk>0 && step>1) setTimeout(refineBest,200);
+  return ret;
 }
+
+function refineBest(){
+  if(sweepRunning){ log("Сначала остановите текущий перебор","err"); return; }
+  const b=getBest();
+  if(!b||b.pk===0){ log("Нет комбинаций с ответом датчика — уточнять нечего","warn"); return; }
+  const step=Math.max(1,+$("sw-b15step").value||1);
+  $("sw-m7").checked=b.mode===7; $("sw-m8").checked=b.mode===8;
+  $("sw-b15min").value=hx(Math.max(0,b.b15-step)); $("sw-b15max").value=hx(Math.min(255,b.b15+step)); $("sw-b15step").value=1;
+  if(b.hdrVal!==null){
+    const hs=Math.max(1,+$("sw-hdrstep").value||1);
+    $("sw-hdrvary").checked=true; $("sw-hdridx").value=b.hdrIdx;
+    $("sw-hdrmin").value=hx(Math.max(0,b.hdrVal-hs)); $("sw-hdrmax").value=hx(Math.min(255,b.hdrVal+hs));
+    $("sw-hdrstep").value=Math.max(1,Math.floor(hs/4));
+  }
+  updateEstimate();
+  log("Уточнение вокруг лучшей: "+comboText(b),"warn");
+  runSweep();
+}
+function retestResponders(){
+  if(sweepRunning){ log("Сначала остановите текущий перебор","err"); return; }
+  const list=sweepResults.filter(r=>r.pk>0).map(r=>({mode:r.mode,b15:r.b15,hdrIdx:r.hdrIdx,hdrVal:r.hdrVal}));
+  if(!list.length){ log("Нет комбинаций с ответом датчика для перепроверки","warn"); return; }
+  log(`Перепроверка ${list.length} комбинаций с выдержкой 3 с`,"warn");
+  runSweep({combos:list,dwell:3000});
+}
+function stressPreset(step,dwell,freq){
+  $("sw-b15min").value="00"; $("sw-b15max").value="FF"; $("sw-b15step").value=step;
+  $("sw-dwell").value=dwell; $("sw-freq").value=freq; $("sw-hdrvary").checked=false;
+  updateEstimate();
+}
+$("pr-fast").onclick=()=>stressPreset(16,800,200);
+$("pr-mid").onclick=()=>stressPreset(4,1000,250);
+$("pr-full").onclick=()=>stressPreset(1,1500,300);
+$("swRefine").onclick=refineBest;
+$("swRetest").onclick=retestResponders;
+$("swApply").onclick=()=>{
+  const b=getBest();
+  if(!b||b.pk===0){ log("Нет комбинаций с ответом датчика","warn"); return; }
+  applyAsMain({mode:b.mode,b15:b.b15,hdrIdx:b.hdrIdx,hdrVal:b.hdrVal});
+};
 function exportSweepCSV(){
   if(!sweepResults.length){ log("Нет результатов для сохранения — сначала запустите перебор.","err"); return; }
-  const header=["idx","mode","b15_hex","hdr_idx","hdr_val_hex","pk_total","type0","type1","type2","bad"];
+  const header=["idx","mode","b15_hex","hdr_idx","hdr_val_hex","pre_idx","pre_val_hex","pk_total","type0","type1","type2","bad"];
   const lines=[header.join(";")];
   for(const r of sweepResults){
     lines.push([
       r.idx, r.mode, "0x"+r.b15.toString(16).padStart(2,"0"),
-      r.hdrVal===null?"":r.hdrIdx, r.hdrVal===null?"":"0x"+r.hdrVal.toString(16).padStart(2,"0"),
+      r.hdrVal==null?"":r.hdrIdx, r.hdrVal==null?"":"0x"+r.hdrVal.toString(16).padStart(2,"0"),
+      r.preVal==null?"":r.preIdx, r.preVal==null?"":"0x"+r.preVal.toString(16).padStart(2,"0"),
       r.pk, r.t0, r.t1, r.t2, r.bad
     ].join(";"));
   }
@@ -574,8 +800,315 @@ $("swSave").onclick=exportSweepCSV;
 $("swStart").onclick=runSweep;
 $("swStop").onclick=()=>{ sweepStop=true; };
 
+
+/* ==================== АНАЛИЗАТОР ==================== */
+const OVH=25, PRIO=[0x0A,0x00,0xFF,0x01];
+let anRunning=false, anAbort=false, anStat={}, anAll=[], anBest=null, anDwell=0, anTested=new Set(), anStart=0;
+const fmtN=n=>n.toLocaleString("ru");
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const esc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function fmtDur(ms){
+  if(ms<1000) return Math.round(ms)+" мс";
+  const s=Math.round(ms/1000);
+  if(s<60) return s+" с";
+  const m=Math.floor(s/60);
+  if(m<60) return `${m} мин ${s%60} с`;
+  const h=Math.floor(m/60);
+  if(h<72) return `${h} ч ${m%60} мин`;
+  const d=Math.floor(h/24);
+  if(d<730) return `${d} дн ${h%24} ч`;
+  return `~${(d/365).toFixed(1)} лет`;
+}
+function gridVals(step,prio){
+  const seen=new Set(), out=[], add=v=>{ if(!seen.has(v)){ seen.add(v); out.push(v); } };
+  if(prio) PRIO.forEach(add);
+  for(let v=0;v<256;v+=step) add(v);
+  return out;
+}
+function tiers(s0){ const t=[s0]; while(t[t.length-1]>1) t.push(Math.max(1,Math.floor(t[t.length-1]/4))); return t; }
+function refVals(center,sPrev,sNew,tested){
+  const out=[]; for(let v=center-sPrev; v<=center+sPrev; v+=sNew){ if(v>=0&&v<=255&&!tested.has(v)) out.push(v); }
+  return out;
+}
+function anParams(){
+  const modes=[]; if($("an-m7").checked) modes.push(7); if($("an-m8").checked) modes.push(8); if(!modes.length) modes.push(7);
+  return {modes, hdr:$("an-hdr").checked, hdrIdx:+$("an-hdridx").value,
+    lic:$("an-lic").checked, licIdx:+$("an-licidx").value,
+    dwell:Math.max(200,+$("an-dwell").value||1500), SA:+$("an-sa").value||16,
+    K:Math.max(1,Math.min(5,+$("an-k").value||2)),
+    opt:{early:$("an-o-early").checked, prio:$("an-o-prio").checked, hier:$("an-o-hier").checked, adapt:$("an-o-adapt").checked}};
+}
+
+// план: оценка числа комбинаций и времени каждого этапа при текущей выдержке
+function buildPlan(P,dwell){
+  const c=n=>n*(dwell+OVH), M=P.modes.length, trunk=[], fall=[];
+  const add=(id,title,sub,n)=>trunk.push({id,title,sub,n,t:c(n)});
+  if(!P.opt.hier){
+    add("A","Полный перебор","mode × b15, все 256 значений"+(P.opt.prio?" · вероятные первыми":""),M*256);
+    if(P.hdr) add("H","Байт заголовка №"+P.hdrIdx,"все 256 значений для лучшего b15",256);
+  }else{
+    const g=gridVals(P.SA,P.opt.prio), T=tiers(P.SA), tested=new Set(g);
+    let bUsed=M*g.length, hUsed=0;
+    add("A","Этап 1 · грубо","mode × b15, шаг "+P.SA+(P.opt.prio?" + вероятные":""),M*g.length);
+    for(let i=1;i<T.length;i++){
+      const v=refVals(128,T[i-1],T[i],tested); v.forEach(x=>tested.add(x));
+      add("R"+i,`Этап ${i+1} · уточнение b15`,`±${T[i-1]}, шаг ${T[i]} · на 1 ответивший`,v.length); bUsed+=v.length;
+    }
+    if(P.hdr){
+      const hg=gridVals(32,P.opt.prio), HT=tiers(32), ht=new Set(hg);
+      add("H0","Байт заголовка №"+P.hdrIdx+" · грубо","шаг 32 · независимо от b15",hg.length); hUsed=hg.length;
+      for(let i=1;i<HT.length;i++){
+        const v=refVals(128,HT[i-1],HT[i],ht); v.forEach(x=>ht.add(x));
+        add("H"+i,"Заголовок №"+P.hdrIdx+" · уточнение",`±${HT[i-1]}, шаг ${HT[i]} · на 1 ответивший`,v.length); hUsed+=v.length;
+      }
+    }
+    let lUsed=0;
+    if(P.lic){
+      const lg=gridVals(32,P.opt.prio), LT=tiers(32), lt=new Set(lg);
+      add("L0","Начало блока №"+P.licIdx+" (лицензия) · грубо","шаг 32 · независимо от остальных",lg.length); lUsed=lg.length;
+      for(let i=1;i<LT.length;i++){
+        const v=refVals(128,LT[i-1],LT[i],lt); v.forEach(x=>lt.add(x));
+        add("L"+i,"Начало блока №"+P.licIdx+" · уточнение",`±${LT[i-1]}, шаг ${LT[i]} · на 1 ответивший`,v.length); lUsed+=v.length;
+      }
+    }
+    fall.push({id:"F1",title:"Запасной · полный перебор остатка",sub:"mode × b15 · гарантия охвата",n:Math.max(0,M*256-bUsed)});
+    if(P.hdr) fall.push({id:"F2",title:"Запасной · весь байт заголовка",sub:`№${P.hdrIdx}, остаток 256 значений для лучшего b15`,n:Math.max(0,256-hUsed)});
+    if(P.lic) fall.push({id:"F3",title:"Запасной · весь байт начала блока",sub:`№${P.licIdx} (лицензия), остаток 256 значений`,n:Math.max(0,256-lUsed)});
+  }
+  let cum=0;
+  trunk.forEach(x=>{
+    const st=anStat[x.id];
+    x.eff=(st&&(st.status==="done"||st.status==="hit"))?st.ms:(st&&st.status==="skipped"?0:x.t);
+    cum+=x.eff; x.cum=cum;
+  });
+  fall.forEach(x=>{ x.t=c(x.n); });
+  const typical=cum, worst=cum+fall.reduce((s,x)=>s+(anStat[x.id]?0:x.t),0);
+  const remaining=trunk.filter(x=>!anStat[x.id]||anStat[x.id].status==="running").reduce((s,x)=>s+x.t,0);
+  const total=M*256*(P.hdr?256:1)*(P.lic?256:1), base=total*(P.dwell+OVH);
+  return {trunk,fall,typical,worst,remaining,naive:{total,worstMs:base,avgMs:P.opt.early?base/2:base}};
+}
+
+function anLines(nd,P,dwell,cumTxt){
+  const st=anStat[nd.id]; let l3;
+  if(st&&(st.status==="done"||st.status==="hit")) l3=`факт: ${fmtN(st.n)} комб · ${fmtDur(st.ms)} · ответов ${st.resp}`;
+  else if(st&&st.status==="skipped") l3="пропущено: "+(st.reason||"не требуется");
+  else if(st&&st.status==="running") l3=`идёт… ${fmtN(st.n)} комб · план ${fmtDur(nd.t)}`;
+  else l3=`план: ${fmtN(nd.n)} комб · ${fmtDur(nd.t)}`+(cumTxt?` · накопл. ${cumTxt}`:"");
+  const d=st&&st.dwell?st.dwell:dwell;
+  let l4=`выдержка ${d} мс`+(P.opt.early?" · стоп на изображении":"");
+  if(P.opt.prio&&/^(A|H0|F1)$/.test(nd.id)) l4+=" · вероятные первыми";
+  if(/^(R|F)/.test(nd.id)||/^H[1-9]/.test(nd.id)) l4+=" · без повторов";
+  return [nd.title,nd.sub,l3,l4];
+}
+function nodeSvg(x,y,w,h,cls,lines){
+  let o=`<rect class="an-n ${cls}" x="${x}" y="${y}" width="${w}" height="${h}" rx="8"/>`;
+  const ys=[20,38,56,71], cl=["an-t","an-s","an-s","an-s2"];
+  lines.forEach((t,i)=>{ if(t) o+=`<text class="${cl[i]}" x="${x+10}" y="${y+ys[i]}">${esc(t)}</text>`; });
+  return o;
+}
+function anTree(plan,P,dwell){
+  const NH=78,GAP=36,STEP=NH+GAP,X=10,NW=310,FX=380,FW=230,FH=46,W=680,CX=640;
+  const m=plan.trunk.length, hasFall=plan.fall.length>0;
+  let s=`<defs><marker id="anar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path class="an-arrow" d="M0,0 L8,4 L0,8z"/></marker></defs>`;
+  let y=10; const failC=[];
+  plan.trunk.forEach((nd,i)=>{
+    const st=anStat[nd.id];
+    s+=nodeSvg(X,y,NW,NH,st?st.status:"",anLines(nd,P,dwell,fmtDur(nd.cum)));
+    if(hasFall){
+      const fy=y+(NH-FH)/2, grp=nd.id[0]==="H"?"H":"R";
+      const pruned=plan.trunk.slice(i+1).filter(x=>x.id[0]===grp).reduce((a,x)=>a+x.n,0);
+      const failed=st&&(st.status==="done")&&st.resp===0;
+      s+=nodeSvg(FX,fy,FW,FH,failed?"fail":"ghost",["нет ответа → откат",pruned?`обрезано ветвей: ${fmtN(pruned)} комб.`:"дальше — запасной перебор"]);
+      s+=`<path class="an-edge" d="M${X+NW} ${y+NH/2} H${FX}"/>`;
+      s+=`<text class="an-lbl" x="${(X+NW+FX)/2}" y="${y+NH/2-5}" text-anchor="middle">нет ответа</text>`;
+      s+=`<path class="an-edge" d="M${FX+FW} ${fy+FH/2} H${CX}"/>`;
+      failC.push(fy+FH/2);
+    }
+    const last=i===m-1;
+    s+=`<path class="an-edge" d="M${X+NW/2} ${y+NH} V${y+STEP}" marker-end="url(#anar)"/>`;
+    s+=`<text class="an-lbl" x="${X+NW/2+8}" y="${y+NH+GAP/2+4}">${last?"есть изображение":"есть ответ → уточнить"}</text>`;
+    y+=STEP;
+  });
+  const stC=anStat.C;
+  s+=nodeSvg(X,y,NW,54,stC?stC.status:"",["✓ Изображение (на любом этапе)",stC&&stC.note?stC.note:"подтверждение: пауза 2 с + повтор 3 с → основной сигнал"]);
+  let fy2=y, bottom=y+54;
+  if(hasFall){
+    const cs=[];
+    plan.fall.forEach((nd,i)=>{
+      const st=anStat[nd.id], top=fy2+i*76, cumTxt=null;
+      s+=nodeSvg(FX,top,FW,68,st?st.status:"ghost",anLines(nd,P,dwell,cumTxt).slice(0,3));
+      cs.push(top+34); bottom=Math.max(bottom,top+68);
+    });
+    s+=`<path class="an-edge" d="M${CX} ${failC[0]} V${cs[cs.length-1]}"/>`;
+    cs.forEach(c=>{ s+=`<path class="an-edge" d="M${CX} ${c} H${FX+FW}" marker-end="url(#anar)"/>`; });
+  }
+  return `<svg viewBox="0 0 ${W} ${bottom+12}" style="width:100%;min-width:600px;height:auto" role="img" aria-label="Дерево поиска">${s}</svg>`;
+}
+
+function anRender(){
+  let P; try{ P=anParams(); }catch(e){ return; }
+  const dwell=anRunning&&anDwell?anDwell:P.dwell;
+  const plan=buildPlan(P,dwell);
+  $("anCtl").disabled=anRunning;
+  // пространство
+  const M=P.modes.length, N1=M*256, N2=N1*256, N2L=N1*256, N3=N2*13, N4=N1*256*256, c=n=>n*(P.dwell+OVH);
+  const card=(n,label,sel)=>`<div class="stat${sel?" sel":""}"><b>${fmtN(n)}</b><span>${label}<br>до ${fmtDur(c(n))}, в среднем ${fmtDur(c(n)/2)}</span></div>`;
+  let anSpaceHtml=card(N1,"mode × b15",!P.hdr&&!P.lic)+card(N2,"+ значение байта заголовка (×256)",P.hdr&&!P.lic)+
+    card(N2L,"+ байт начала блока · лицензия (×256)",P.lic&&!P.hdr)+card(N3,"+ все 13 позиций заголовка (×13)",false);
+  if(P.hdr&&P.lic) anSpaceHtml+=card(N4,"+ заголовок × начало блока (обе галочки)",true);
+  $("anSpace").innerHTML=anSpaceHtml;
+  // сводка
+  const speed=plan.typical>0?plan.naive.worstMs/plan.typical:0;
+  const sp=speed>=10?Math.round(speed):speed.toFixed(1);
+  $("anSummary").innerHTML=
+    `<div class="stat"><b>×${sp}</b><span>ускорение: наивный худший ÷ дерево, типичный путь</span></div>`+
+    `<div class="stat"><b>${fmtDur(plan.remaining)}</b><span>осталось по типичному пути</span></div>`+
+    `<div class="stat"><b>${dwell} мс</b><span>выдержка сейчас${dwell<P.dwell?` (было ${P.dwell})`:""}</span></div>`;
+  $("anTreeWrap").innerHTML=anTree(plan,P,dwell);
+  // столбики
+  const items=[["Наивно · худший случай",plan.naive.worstMs,"bad"],["Наивно · в среднем",plan.naive.avgMs,"bad"],
+    ["По дереву · типичный путь",plan.typical,"ok"],["По дереву · худший (с откатом)",plan.worst,"ok"]];
+  const mx=Math.max(1,...items.map(i=>i[1]));
+  $("anBars").innerHTML=items.map(([l,v,k])=>`<div class="bar"><span>${l}</span><div class="tr"><div class="fl ${k}" style="width:${Math.max(1.5,v/mx*100).toFixed(1)}%"></div></div><b>${fmtDur(v)}</b></div>`).join("");
+}
+
+// ---- исполнитель ----
+const anKey=c=>`${c.mode}|${c.b15}|${c.hdrVal==null?"-":c.hdrIdx+":"+c.hdrVal}|${c.preVal==null?"-":c.preIdx+":"+c.preVal}`;
+function anCenters(P,dim){
+  const noLic=r=>r.preVal===null||r.preVal===undefined;
+  const list=anAll.filter(r=>r.pk>0&&(dim==="b"?r.hdrVal==null&&noLic(r):dim==="h"?r.hdrVal!=null&&noLic(r):r.preVal!=null)).sort((a,b)=>b.t0-a.t0||b.pk-a.pk);
+  const seen=new Set(), out=[];
+  for(const r of list){
+    const k=dim==="b"?r.mode+"|"+r.b15:dim==="h"?r.mode+"|"+r.b15+"|"+r.hdrVal:r.mode+"|"+r.b15+"|"+r.hdrVal+"|"+r.preVal;
+    if(seen.has(k)) continue; seen.add(k); out.push(r); if(out.length>=P.K) break;
+  }
+  return out;
+}
+async function anExec(id,combos,P){
+  combos=combos.filter(c=>!anTested.has(anKey(c)));
+  if(!combos.length){ anStat[id]={status:"skipped",n:0,ms:0,resp:0,reason:"всё уже проверено"}; anRender(); return {found:false,results:[]}; }
+  anStat[id]={status:"running",n:combos.length,ms:0,resp:0,dwell:anDwell}; anRender();
+  const t0=Date.now(), all=[];
+  for(let i=0;i<combos.length&&!anAbort;i+=800){
+    const r=await runSweep({combos:combos.slice(i,i+800),dwell:anDwell,stopImg:P.opt.early});
+    if(!r){ anAbort=true; break; }
+    r.results.forEach(x=>{ anTested.add(anKey(x)); all.push(x); anAll.push(x); });
+    if(r.foundStop) break;
+    if(r.stopped){ anAbort=true; break; }
+  }
+  const resp=all.filter(x=>x.pk>0).length, fnd=all.some(x=>x.t0>0);
+  anStat[id]={status:fnd?"hit":"done",n:all.length,ms:Date.now()-t0,resp,dwell:anDwell};
+  if(fnd) anBest=all.slice().sort((a,b)=>b.t0-a.t0||b.pk-a.pk)[0];
+  // адаптивная выдержка: пересчитываем оставшиеся этапы по измеренной задержке ответа
+  if(P.opt.adapt&&!fnd){
+    const lat=anAll.filter(x=>x.pk>0&&x.firstMs!=null).map(x=>x.firstMs);
+    if(lat.length){
+      const mx=Math.max(...lat), eff=Math.min(P.dwell,Math.max(500,Math.ceil((mx*2+100)/50)*50));
+      if(eff<anDwell){ log(`Анализатор: выдержка ${anDwell} → ${eff} мс (задержка ответа до ${mx} мс)`,"warn"); anDwell=eff; }
+    }
+  }
+  anRender();
+  return {found:fnd,results:all};
+}
+async function anPlanRun(P){
+  const mk=(m,b,hv,pIdx,pv)=>({mode:m,b15:b,hdrIdx:P.hdrIdx,hdrVal:(hv===undefined?null:hv),preIdx:(pIdx===undefined?P.licIdx:pIdx),preVal:(pv===undefined?null:pv)});
+  const grid=(step)=>gridVals(step,P.opt.prio).flatMap(b=>P.modes.map(m=>mk(m,b,null)));
+  const skip=(id,reason)=>{ anStat[id]={status:"skipped",n:0,ms:0,resp:0,reason}; anRender(); };
+  let found=false;
+  const hdrBase=()=>{ const b=anCenters(P,"b")[0]; return b?{mode:b.mode,b15:b.b15}:{mode:P.modes[0],b15:cfg.b15}; };
+  // база для лицензионной ветки: берёт лучший найденный вариант по заголовку (если он перебирался), иначе по b15
+  const licBase=()=>{
+    if(P.hdr){ const h=anCenters(P,"h")[0]; if(h) return {mode:h.mode,b15:h.b15,hdrVal:h.hdrVal}; }
+    const b=anCenters(P,"b")[0]; if(b) return {mode:b.mode,b15:b.b15,hdrVal:null};
+    return {mode:P.modes[0],b15:cfg.b15,hdrVal:null};
+  };
+  if(!P.opt.hier){
+    found=(await anExec("A",grid(1),P)).found;
+    if(!found&&!anAbort&&P.hdr){
+      const bs=hdrBase();
+      found=(await anExec("H",gridVals(1,P.opt.prio).map(v=>mk(bs.mode,bs.b15,v)),P)).found;
+    }
+  }else{
+    found=(await anExec("A",grid(P.SA),P)).found;
+    const T=tiers(P.SA);
+    for(let i=1;i<T.length&&!found&&!anAbort;i++){
+      const cs=anCenters(P,"b"), id="R"+i;
+      if(!cs.length){ skip(id,"нет ответивших для уточнения"); continue; }
+      const combos=[];
+      cs.forEach(ct=>{ for(let v=ct.b15-T[i-1];v<=ct.b15+T[i-1];v+=T[i]) if(v>=0&&v<=255) combos.push(mk(ct.mode,v,null)); });
+      found=(await anExec(id,combos,P)).found;
+    }
+    if(P.hdr&&!found&&!anAbort){
+      const bs=hdrBase(), HT=tiers(32);
+      found=(await anExec("H0",gridVals(32,P.opt.prio).map(v=>mk(bs.mode,bs.b15,v)),P)).found;
+      for(let i=1;i<HT.length&&!found&&!anAbort;i++){
+        const cs=anCenters(P,"h"), id="H"+i;
+        if(!cs.length){ skip(id,"нет ответивших для уточнения"); continue; }
+        const combos=[];
+        cs.forEach(ct=>{ for(let v=ct.hdrVal-HT[i-1];v<=ct.hdrVal+HT[i-1];v+=HT[i]) if(v>=0&&v<=255) combos.push(mk(ct.mode,ct.b15,v)); });
+        found=(await anExec(id,combos,P)).found;
+      }
+    }
+    if(!found&&!anAbort){ log("Анализатор: уточнение не дало изображения — запасной полный перебор","warn"); found=(await anExec("F1",grid(1),P)).found; }
+    if(!found&&!anAbort&&P.hdr){
+      const cs=anCenters(P,"b"), list=cs.length?cs:[hdrBase()], combos=[];
+      list.forEach(ct=>{ for(let v=0;v<256;v++) combos.push(mk(ct.mode,ct.b15,v)); });
+      found=(await anExec("F2",combos,P)).found;
+    }
+    if(P.lic&&!found&&!anAbort){
+      const ls=licBase(), LT=tiers(32);
+      found=(await anExec("L0",gridVals(32,P.opt.prio).map(v=>mk(ls.mode,ls.b15,ls.hdrVal,P.licIdx,v)),P)).found;
+      for(let i=1;i<LT.length&&!found&&!anAbort;i++){
+        const cs=anCenters(P,"l"), id="L"+i;
+        if(!cs.length){ skip(id,"нет ответивших для уточнения"); continue; }
+        const combos=[];
+        cs.forEach(ct=>{ for(let v=ct.preVal-LT[i-1];v<=ct.preVal+LT[i-1];v+=LT[i]) if(v>=0&&v<=255) combos.push(mk(ct.mode,ct.b15,ct.hdrVal,P.licIdx,v)); });
+        found=(await anExec(id,combos,P)).found;
+      }
+    }
+    if(!found&&!anAbort&&P.lic){
+      const cs=anCenters(P,"l"), ls=licBase(), list=cs.length?cs.map(c=>({mode:c.mode,b15:c.b15,hdrVal:c.hdrVal})):[ls], combos=[];
+      list.forEach(ct=>{ for(let v=0;v<256;v++) combos.push(mk(ct.mode,ct.b15,ct.hdrVal,P.licIdx,v)); });
+      found=(await anExec("F3",combos,P)).found;
+    }
+  }
+  if(found&&anBest&&!anAbort){
+    anStat.C={status:"running",n:1,ms:0,resp:0,note:"пауза 2 с…"}; anRender();
+    await sleep(2000);
+    anStat.C.note="повтор 3 с…"; anRender();
+    const r=await runSweep({combos:[{mode:anBest.mode,b15:anBest.b15,hdrIdx:anBest.hdrIdx,hdrVal:anBest.hdrVal,preIdx:anBest.preIdx,preVal:anBest.preVal}],dwell:3000,stopImg:false});
+    const ok=!!(r&&r.results[0]&&r.results[0].t0>0);
+    anStat.C={status:ok?"hit":"done",n:1,ms:3000,resp:ok?1:0,note:ok?"подтверждено повтором":"не подтвердилось — перепроверьте"};
+    if(ok){ log("Анализатор: изображение подтверждено — "+comboText(anBest),"ok"); $("anApply").disabled=false; }
+    else log("Анализатор: повтор не дал изображения (возможен хвост ответа). Перепроверьте во вкладке «Генератор».","warn");
+  }else if(!found&&!anAbort){
+    log("Анализатор: изображение не получено во всём проверенном пространстве. Следующие гипотезы: другие байты заголовка, начало блока (байты 0–13).","warn");
+  }
+}
+async function anRun(){
+  if(!run||!dev){ log("Сначала подключите датчик (вкладка «Связь»)","err"); return; }
+  if(sweepRunning||anRunning){ log("Сначала остановите текущий перебор","err"); return; }
+  try{ readCfg(); }catch(e){ log(e.message,"err"); return; }
+  const P=anParams();
+  anRunning=true; anAbort=false; anStat={}; anAll=[]; anBest=null; anTested=new Set(); anDwell=P.dwell; anStart=Date.now();
+  $("anStart").disabled=true; $("anStop").disabled=false; $("anApply").disabled=true;
+  log("Анализатор: запуск по дереву","warn"); anRender();
+  try{ await anPlanRun(P); }catch(e){ log("Анализатор: "+e.message,"err"); }
+  anRunning=false; $("anStart").disabled=false; $("anStop").disabled=true;
+  $("anElapsed").textContent="заняло "+fmtDur(Date.now()-anStart);
+  log(anAbort?"Анализатор остановлен":"Анализатор завершён","warn"); anRender();
+}
+$("anStart").onclick=anRun;
+$("anStop").onclick=()=>{ anAbort=true; sweepStop=true; };
+$("anApply").onclick=()=>{ if(anBest) applyAsMain({mode:anBest.mode,b15:anBest.b15,hdrIdx:anBest.hdrIdx,hdrVal:anBest.hdrVal,preIdx:anBest.preIdx,preVal:anBest.preVal}); };
+["an-m7","an-m8","an-hdr","an-hdridx","an-lic","an-licidx","an-dwell","an-sa","an-k","an-o-early","an-o-prio","an-o-hier","an-o-adapt"].forEach(id=>{
+  const f=()=>{ if(!anRunning){ anStat={}; anBest=null; } anRender(); };
+  $(id).addEventListener("input",f); $(id).addEventListener("change",f);
+});
+
 log(navigator.usb?"WebUSB доступен.":"WebUSB недоступен","t");
 updateEstimate();
+anRender();
 paint();
 </script>
 </body>
